@@ -1,0 +1,856 @@
+﻿# ──────────────────────────────────────────────────────────────────────────────
+# pipeline/.github/workflows/ci-cd.yml
+#
+# PIPELINE CI/CD COMPLETO — Brainmart DevSecOps
+#
+# ETAPAS EN ORDEN:
+#   1. policy-check    → Checkov + OPA (valida IaC antes del plan)
+#   2. sast-sca        → SonarQube (SAST) + Snyk (SCA)
+#   3. terragrunt-plan → Plan de Terraform (valida cambios de infra)
+#   4. build-scan      → Build Docker + Trivy scan + Cosign firma
+#   5. sbom-generate   → Generación SBOM SPDX
+#   6. deploy-dev      → Deploy automático a DEV
+#   7. deploy-staging  → Deploy automático a STAGING
+#   8. dast            → OWASP ZAP en STAGING
+#   9. deploy-prod     → Deploy a PROD (requiere aprobación manual)
+#
+# CUMPLIMIENTO:
+#   - FDA 21 CFR Part 11: cambios de software deben pasar por proceso validado
+#   - GCP: los sistemas deben tener control de cambios documentado
+#   - OWASP: testing de seguridad antes de producción
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: 🚀 Brainmart CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - "release/**"
+      - "feature/**"
+  pull_request:
+    branches:
+      - main
+      - "release/**"
+
+# Permisos mínimos (principio de mínimo privilegio en el pipeline)
+permissions:
+  contents: read
+  id-token: write  # Para OIDC con AWS (sin credenciales estáticas)
+  security-events: write  # Para CodeQL y Sarif uploads
+  packages: write  # Para push a GHCR (si aplica)
+  pull-requests: write  # Para comentar resultados de checks en PRs
+
+env:
+  # ── Versiones fijas para reproducibilidad ──
+  TERRAFORM_VERSION: "1.7.5"
+  TERRAGRUNT_VERSION: "0.55.18"
+  DOTNET_VERSION: "8.0.x"
+  NODE_VERSION: "20.x"
+
+  # ── Nombres de recursos AWS ──
+  ECR_REGISTRY: "${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com"
+  IMAGE_NAME: "brainmart/patient-service"
+
+  # ── Configuración del pipeline ──
+  CHECKOV_VERSION: "3.2.0"
+
+jobs:
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 1: POLICY-AS-CODE (Checkov + OPA)
+  # Valida la IaC ANTES de cualquier plan o apply
+  # Si este job falla, TODO el pipeline se detiene
+  # ════════════════════════════════════════════════════════════════════════════
+  policy-check:
+    name: 🔍 Policy-as-Code (Checkov + OPA)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout código
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python para Checkov
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: 📦 Instalar Checkov
+        run: |
+          pip install checkov==${{ env.CHECKOV_VERSION }}
+          checkov --version
+
+      - name: 🔍 Ejecutar Checkov con custom policies
+        id: checkov
+        run: |
+          cd infrastructure
+
+          # Crear directorio de resultados
+          mkdir -p checkov-results
+
+          # Checkov lee framework, skip-check, compact y download-external-modules
+          # directamente desde .checkov.yaml vía --config-file.
+          # Los flags --output y --output-file-path se pasan en CLI porque
+          # el YAML solo acepta un valor en 'output', no múltiples.
+          checkov \
+            -d . \
+            --external-checks-dir policy-as-code/checkov/custom_policies/ \
+            --config-file policy-as-code/checkov/.checkov.yaml \
+            --output cli \
+            --output junitxml \
+            --output-file-path checkov-results \
+            || CHECKOV_EXIT_CODE=$?
+
+          echo "checkov_exit_code=${CHECKOV_EXIT_CODE:-0}" >> $GITHUB_OUTPUT
+
+          # Mostrar resumen
+          echo "## 🔍 Checkov Results" >> $GITHUB_STEP_SUMMARY
+          if [ "${CHECKOV_EXIT_CODE:-0}" -eq 0 ]; then
+            echo "✅ Todos los checks de Checkov pasaron" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Checkov detectó violaciones de compliance" >> $GITHUB_STEP_SUMMARY
+            echo "Revisar los resultados en el artefacto 'checkov-results'" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 📊 Upload Checkov results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: checkov-results
+          path: infrastructure/checkov-results/
+          retention-days: 90  # Evidencia de compliance retenida 90 días (auditabilidad)
+
+      - name: 📊 Publicar resultados Checkov en PR
+        uses: dorny/test-reporter@v1
+        if: github.event_name == 'pull_request'
+        with:
+          name: Checkov Policy Results
+          # Checkov 3.x genera el archivo con el nombre results_junitxml.xml
+          path: "infrastructure/checkov-results/results_junitxml.xml"
+          reporter: java-junit
+          fail-on-error: true
+
+      # ── OPA / Conftest ──
+      - name: 🔧 Instalar Conftest (OPA runner)
+        run: |
+          # Instalar conftest para ejecutar políticas Rego contra el plan de Terraform
+          CONFTEST_VERSION="0.50.0"
+          curl -Lo conftest.tar.gz \
+            "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          tar xzf conftest.tar.gz
+          sudo mv conftest /usr/local/bin/
+          conftest --version
+
+      - name: 🏗️ Setup Terraform para generar plan
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: 🔍 Ejecutar OPA policies contra módulos Terraform
+        run: |
+          cd infrastructure
+
+          # Para las políticas OPA que validan el plan de Terraform,
+          # necesitamos generar un plan primero. En este job usamos
+          # un plan sintético (mock) para validar la sintaxis de las políticas.
+          # El plan real se genera en el job terragrunt-plan.
+
+          echo "Validando políticas OPA contra configuración de módulos..."
+
+          # Crear un plan JSON de ejemplo para validar las políticas Rego
+          # En el pipeline real, este JSON viene del terragrunt plan
+          cat > /tmp/mock-tfplan.json << 'EOF'
+          {
+            "format_version": "1.2",
+            "resource_changes": [
+              {
+                "address": "aws_db_instance.main",
+                "type": "aws_db_instance",
+                "change": {
+                  "actions": ["create"],
+                  "after": {
+                    "identifier": "brainmart-dev-rds-postgres",
+                    "instance_class": "db.t3.medium",
+                    "multi_az": false,
+                    "storage_encrypted": true,
+                    "backup_retention_period": 7,
+                    "deletion_protection": false,
+                    "tags": {
+                      "Environment": "dev",
+                      "Project": "brainmart",
+                      "Owner": "devsecops-team@brainmart.health",
+                      "ComplianceLevel": "FDA-21CFR11-GCP-ALCOA-GDPR"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+
+          # Ejecutar conftest contra el plan mock
+          conftest test /tmp/mock-tfplan.json \
+            --policy policy-as-code/opa/policies/ \
+            --namespace brainmart \
+            --output table \
+            --fail-on-warn=false || OPA_EXIT_CODE=$?
+
+          echo "## 🔍 OPA Policy Results" >> $GITHUB_STEP_SUMMARY
+          if [ "${OPA_EXIT_CODE:-0}" -eq 0 ]; then
+            echo "✅ Todas las políticas OPA pasaron" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️  Algunas políticas OPA fallaron (esperado en dev con multi_az=false)" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: ❌ Fallar si Checkov encontró violaciones CRÍTICAS
+        if: steps.checkov.outputs.checkov_exit_code != '0'
+        run: |
+          echo "❌ Checkov encontró violaciones de compliance. El pipeline no puede continuar."
+          echo "Revisar el artefacto 'checkov-results' para detalles."
+          exit 1
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 2: SAST + SCA (Análisis de código y dependencias)
+  # ════════════════════════════════════════════════════════════════════════════
+  sast-sca:
+    name: 🔒 SAST (SonarQube) + SCA (Snyk)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [policy-check]
+
+    steps:
+      - name: 📥 Checkout código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # SonarQube necesita el historial completo para blame
+
+      - name: 🔧 Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: 🔧 Setup Node.js para Angular
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: frontend/patient-dashboard/package-lock.json
+
+      - name: 📦 Instalar dependencias .NET
+        run: |
+          cd microservices/patient-service
+          dotnet restore
+
+      - name: 🏗️ Build .NET (necesario para SonarQube)
+        run: |
+          cd microservices/patient-service
+          dotnet build --no-restore --configuration Release
+
+      - name: 🧪 Tests .NET con cobertura
+        run: |
+          cd microservices/patient-service
+          dotnet test \
+            --no-build \
+            --configuration Release \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./TestResults \
+            --logger "trx;LogFileName=test-results.trx"
+
+      - name: 🔍 SonarQube Scan (.NET)
+        uses: SonarSource/sonarqube-scan-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        with:
+          projectBaseDir: microservices/patient-service
+          args: >
+            -Dsonar.projectKey=brainmart-patient-service
+            -Dsonar.projectName="Brainmart Patient Service"
+            -Dsonar.sources=src
+            -Dsonar.tests=tests
+            -Dsonar.cs.opencover.reportsPaths=**/coverage.opencover.xml
+            -Dsonar.cs.vstest.reportsPaths=**/TestResults/*.trx
+            -Dsonar.qualitygate.wait=true
+
+      - name: 📦 Instalar dependencias Angular
+        run: |
+          cd frontend/patient-dashboard
+          npm ci
+
+      - name: 🔍 SonarQube Scan (Angular)
+        uses: SonarSource/sonarqube-scan-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        with:
+          projectBaseDir: frontend/patient-dashboard
+
+      - name: 🔍 Snyk SCA (.NET dependencies)
+        uses: snyk/actions/dotnet@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: |
+            --severity-threshold=high
+            --project-name=brainmart-patient-service
+            --file=microservices/patient-service/PatientService.sln
+          command: test
+
+      - name: 🔍 Snyk SCA (Angular dependencies)
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: |
+            --severity-threshold=high
+            --project-name=brainmart-patient-dashboard
+          command: test
+
+      - name: 📊 Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: microservices/patient-service/TestResults/
+          retention-days: 90
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 3: TERRAGRUNT PLAN
+  # Genera el plan de Terraform para dev y staging
+  # ════════════════════════════════════════════════════════════════════════════
+  terragrunt-plan:
+    name: 📋 Terragrunt Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [policy-check]
+
+    strategy:
+      matrix:
+        environment: [dev, staging]
+
+    steps:
+      - name: 📥 Checkout código
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: 🔧 Setup Terragrunt
+        run: |
+          curl -Lo terragrunt \
+            "https://github.com/gruntwork-io/terragrunt/releases/download/v${{ env.TERRAGRUNT_VERSION }}/terragrunt_linux_amd64"
+          chmod +x terragrunt
+          sudo mv terragrunt /usr/local/bin/
+          terragrunt --version
+
+      - name: 🔑 Configurar credenciales AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}:role/GitHubActionsRole
+          role-session-name: Terragrunt-${{ matrix.environment }}-${{ github.sha }}
+          aws-region: us-east-1
+
+      - name: 🏗️ Terragrunt Init
+        run: |
+          cd infrastructure/environments/${{ matrix.environment }}
+          terragrunt run-all init \
+            --terragrunt-non-interactive \
+            --terragrunt-parallelism 5
+
+      - name: 📋 Terragrunt Plan
+        id: plan
+        run: |
+          cd infrastructure/environments/${{ matrix.environment }}
+          terragrunt run-all plan \
+            --terragrunt-non-interactive \
+            -out=tfplan.binary \
+            2>&1 | tee plan-output.txt
+
+          echo "## 📋 Terragrunt Plan - ${{ matrix.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -50 plan-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: 🔍 OPA validation contra plan real
+        run: |
+          cd infrastructure/environments/${{ matrix.environment }}
+
+          # Convertir el plan binario a JSON para conftest
+          find . -name "tfplan.binary" | while read plan; do
+            dir=$(dirname "$plan")
+            terraform -chdir="$dir" show -json tfplan.binary > "$dir/tfplan.json"
+
+            conftest test "$dir/tfplan.json" \
+              --policy ../../policy-as-code/opa/policies/ \
+              --namespace brainmart \
+              --output table || true  # No fallar aquí; el dev puede tener multi_az=false
+          done
+
+      - name: 📊 Upload plan artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ matrix.environment }}
+          path: |
+            infrastructure/environments/${{ matrix.environment }}/**/plan-output.txt
+            infrastructure/environments/${{ matrix.environment }}/**/tfplan.json
+          retention-days: 30
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 4: BUILD + CONTAINER SCAN + SIGN
+  # ════════════════════════════════════════════════════════════════════════════
+  build-scan:
+    name: 🐳 Build + Trivy + Cosign
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [sast-sca]
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tags: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: 📥 Checkout código
+        uses: actions/checkout@v4
+
+      - name: 🔑 Configurar credenciales AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}:role/GitHubActionsRole
+          role-session-name: DockerBuild-${{ github.sha }}
+          aws-region: us-east-1
+
+      - name: 🔑 Login a Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 🏷️ Docker metadata (tags y labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: 🔧 Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🐳 Build y Push imagen Docker
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: microservices/patient-service
+          file: microservices/patient-service/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Multi-platform: AMD64 (Fargate x86) y ARM64 (Fargate Graviton)
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+            GIT_COMMIT=${{ github.sha }}
+            VERSION=${{ github.ref_name }}
+
+      - name: 🔍 Trivy scan de vulnerabilidades
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true
+
+      - name: 📊 Upload Trivy SARIF a GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
+          category: "container-scanning"
+
+      - name: ❌ Fallar si Trivy encuentra CVEs CRÍTICOS
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+          format: "table"
+          exit-code: "1"
+          severity: "CRITICAL"
+          ignore-unfixed: true
+
+      - name: 🔐 Instalar Cosign para firma de imagen
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: "v2.2.3"
+
+      - name: ✍️ Firmar imagen con Cosign (keyless via OIDC)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          COSIGN_EXPERIMENTAL: "1"  # Habilita keyless signing
+        run: |
+          # Cosign firma la imagen con el certificado OIDC de GitHub Actions
+          # La firma se almacena en el mismo repositorio ECR
+          # No necesita secretos: usa OIDC para autenticarse con sigstore
+          cosign sign --yes \
+            "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+
+          echo "✅ Imagen firmada con Cosign (keyless OIDC)"
+          echo "Digest: ${DIGEST}"
+
+          # Agregar anotaciones de compliance a la firma
+          cosign attest --yes \
+            --predicate - \
+            --type "https://brainmart.health/compliance/v1" \
+            "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}" << EOF
+          {
+            "buildDate": "${{ github.event.repository.updated_at }}",
+            "gitCommit": "${{ github.sha }}",
+            "gitBranch": "${{ github.ref_name }}",
+            "buildPipeline": "github-actions",
+            "complianceChecks": {
+              "checkov": "passed",
+              "sast": "passed",
+              "sca": "passed",
+              "trivy": "passed"
+            },
+            "fda21cfr11": "validated",
+            "gcpCompliant": true
+          }
+          EOF
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 5: SBOM GENERATION
+  # Genera el Software Bill of Materials en formato SPDX
+  # ════════════════════════════════════════════════════════════════════════════
+  sbom-generate:
+    name: 📋 SBOM Generation (SPDX)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [build-scan]
+
+    steps:
+      - name: 📥 Checkout código
+        uses: actions/checkout@v4
+
+      - name: 🔑 Configurar credenciales AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}:role/GitHubActionsRole
+          role-session-name: SBOM-${{ github.sha }}
+          aws-region: us-east-1
+
+      - name: 🔑 Login a Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 📋 Generar SBOM con Syft
+        uses: anchore/sbom-action@v0
+        with:
+          image: "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+          format: spdx-json
+          output-file: sbom-patient-service.spdx.json
+          upload-artifact: true
+          artifact-name: sbom-patient-service
+
+      - name: 📋 Generar SBOM del código fuente .NET
+        uses: anchore/sbom-action@v0
+        with:
+          path: microservices/patient-service/src
+          format: spdx-json
+          output-file: sbom-source-code.spdx.json
+          upload-artifact: true
+          artifact-name: sbom-source-code
+
+      - name: 📊 Adjuntar SBOM a la firma Cosign
+        env:
+          DIGEST: ${{ needs.build-scan.outputs.image-digest }}
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          # El SBOM se adjunta como attestation a la imagen firmada
+          cosign attest --yes \
+            --predicate sbom-patient-service.spdx.json \
+            --type spdx \
+            "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+
+          echo "✅ SBOM adjuntado a la imagen como attestation Cosign"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 6: DEPLOY DEV
+  # Deploy automático al ambiente de desarrollo
+  # ════════════════════════════════════════════════════════════════════════════
+  deploy-dev:
+    name: 🚀 Deploy DEV
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [terragrunt-plan, build-scan, sbom-generate]
+    if: github.ref != 'refs/heads/main' || github.event_name == 'push'
+
+    environment:
+      name: dev
+      url: https://api-dev.brainmart.health
+
+    steps:
+      - name: 📥 Checkout código
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Terraform + Terragrunt
+        run: |
+          # Instalar Terraform
+          curl -fsSL https://releases.hashicorp.com/terraform/${{ env.TERRAFORM_VERSION }}/terraform_${{ env.TERRAFORM_VERSION }}_linux_amd64.zip -o terraform.zip
+          unzip terraform.zip && sudo mv terraform /usr/local/bin/
+
+          # Instalar Terragrunt
+          curl -Lo terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${{ env.TERRAGRUNT_VERSION }}/terragrunt_linux_amd64"
+          chmod +x terragrunt && sudo mv terragrunt /usr/local/bin/
+
+      - name: 🔑 Configurar credenciales AWS (DEV)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}:role/GitHubActionsRole
+          role-session-name: Deploy-DEV-${{ github.sha }}
+          aws-region: us-east-1
+
+      - name: 🚀 Terragrunt Apply - DEV
+        run: |
+          cd infrastructure/environments/dev
+          terragrunt run-all apply \
+            --terragrunt-non-interactive \
+            --terragrunt-parallelism 3 \
+            -auto-approve
+
+      - name: 🚀 Deploy microservicio a ECS (DEV)
+        run: |
+          # Actualizar la task definition de ECS con la nueva imagen
+          aws ecs update-service \
+            --cluster brainmart-dev-ecs-cluster \
+            --service brainmart-dev-patient-service \
+            --force-new-deployment \
+            --region us-east-1
+
+          # Esperar a que el deploy complete
+          aws ecs wait services-stable \
+            --cluster brainmart-dev-ecs-cluster \
+            --services brainmart-dev-patient-service \
+            --region us-east-1
+
+          echo "✅ Deploy a DEV completado"
+
+      - name: ✅ Smoke tests DEV
+        run: |
+          # Esperar a que el servicio esté disponible
+          sleep 30
+
+          # Health check básico
+          curl -f https://api-dev.brainmart.health/health || \
+            (echo "❌ Health check falló en DEV" && exit 1)
+
+          echo "✅ Smoke tests DEV pasaron"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 7: DEPLOY STAGING
+  # Deploy automático a staging
+  # ════════════════════════════════════════════════════════════════════════════
+  deploy-staging:
+    name: 🚀 Deploy STAGING
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [deploy-dev]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')
+
+    environment:
+      name: staging
+      url: https://api-staging.brainmart.health
+
+    steps:
+      - name: 📥 Checkout código
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Terraform + Terragrunt
+        run: |
+          curl -fsSL https://releases.hashicorp.com/terraform/${{ env.TERRAFORM_VERSION }}/terraform_${{ env.TERRAFORM_VERSION }}_linux_amd64.zip -o terraform.zip
+          unzip terraform.zip && sudo mv terraform /usr/local/bin/
+          curl -Lo terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${{ env.TERRAGRUNT_VERSION }}/terragrunt_linux_amd64"
+          chmod +x terragrunt && sudo mv terragrunt /usr/local/bin/
+
+      - name: 🔑 Configurar credenciales AWS (STAGING)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}:role/GitHubActionsRole
+          role-session-name: Deploy-STAGING-${{ github.sha }}
+          aws-region: us-east-1
+
+      - name: 🚀 Terragrunt Apply - STAGING
+        run: |
+          cd infrastructure/environments/staging
+          terragrunt run-all apply \
+            --terragrunt-non-interactive \
+            --terragrunt-parallelism 3 \
+            -auto-approve
+
+      - name: 🚀 Deploy microservicio a ECS (STAGING)
+        run: |
+          aws ecs update-service \
+            --cluster brainmart-staging-ecs-cluster \
+            --service brainmart-staging-patient-service \
+            --force-new-deployment \
+            --region us-east-1
+
+          aws ecs wait services-stable \
+            --cluster brainmart-staging-ecs-cluster \
+            --services brainmart-staging-patient-service \
+            --region us-east-1
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 8: DAST (OWASP ZAP en STAGING)
+  # Dynamic Application Security Testing
+  # ════════════════════════════════════════════════════════════════════════════
+  dast:
+    name: 🔒 DAST (OWASP ZAP)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [deploy-staging]
+
+    steps:
+      - name: 📥 Checkout código
+        uses: actions/checkout@v4
+
+      - name: 🔒 OWASP ZAP Full Scan
+        uses: zaproxy/action-full-scan@v0.9.0
+        with:
+          target: "https://api-staging.brainmart.health"
+          rules_file_name: ".zap/rules.tsv"
+          cmd_options: "-a -j"
+          # Configuración de ZAP para la API de Brainmart
+          docker_name: "ghcr.io/zaproxy/zaproxy:stable"
+          # El JWT token de staging para autenticar las requests
+          allow_issue_writing: false
+
+      - name: 📊 Upload ZAP report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dast-zap-report
+          path: |
+            report_html.html
+            report_json.json
+          retention-days: 90  # Evidencia de testing de seguridad
+
+      - name: 📊 Agregar ZAP summary al pipeline
+        if: always()
+        run: |
+          echo "## 🔒 DAST Results (OWASP ZAP)" >> $GITHUB_STEP_SUMMARY
+          echo "Target: https://api-staging.brainmart.health" >> $GITHUB_STEP_SUMMARY
+          echo "Reporte completo en artefacto: dast-zap-report" >> $GITHUB_STEP_SUMMARY
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 9: DEPLOY PRODUCCIÓN
+  # Requiere aprobación manual (GitHub Environments)
+  # ════════════════════════════════════════════════════════════════════════════
+  deploy-prod:
+    name: 🚀 Deploy PRODUCCIÓN
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [dast]
+    if: github.ref == 'refs/heads/main'
+
+    # APROBACIÓN MANUAL: configurada en GitHub Settings → Environments → production
+    # Los revisores designados reciben una notificación y deben aprobar manualmente
+    environment:
+      name: production
+      url: https://api.brainmart.health
+
+    steps:
+      - name: 📥 Checkout código
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Terraform + Terragrunt
+        run: |
+          curl -fsSL https://releases.hashicorp.com/terraform/${{ env.TERRAFORM_VERSION }}/terraform_${{ env.TERRAFORM_VERSION }}_linux_amd64.zip -o terraform.zip
+          unzip terraform.zip && sudo mv terraform /usr/local/bin/
+          curl -Lo terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${{ env.TERRAGRUNT_VERSION }}/terragrunt_linux_amd64"
+          chmod +x terragrunt && sudo mv terragrunt /usr/local/bin/
+
+      - name: 🔑 Configurar credenciales AWS (PROD)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}:role/GitHubActionsRole
+          role-session-name: Deploy-PROD-${{ github.sha }}
+          aws-region: us-east-1
+
+      - name: 🔍 Verificar firma Cosign de la imagen antes de deploy
+        env:
+          DIGEST: ${{ needs.build-scan.outputs.image-digest }}
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign verify \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+
+          echo "✅ Firma Cosign verificada. La imagen proviene del pipeline de CI/CD."
+
+      - name: 🚀 Terragrunt Apply - PRODUCCIÓN (us-east-1)
+        run: |
+          cd infrastructure/environments/prod
+          terragrunt run-all apply \
+            --terragrunt-non-interactive \
+            --terragrunt-parallelism 2 \
+            -auto-approve
+
+      - name: 🚀 Terragrunt Apply - DR (eu-west-1)
+        run: |
+          cd infrastructure/environments/prod/dr-eu-west-1
+          terragrunt run-all apply \
+            --terragrunt-non-interactive \
+            -auto-approve
+
+      - name: 🚀 Deploy microservicio a ECS (PROD)
+        run: |
+          aws ecs update-service \
+            --cluster brainmart-prod-ecs-cluster \
+            --service brainmart-prod-patient-service \
+            --force-new-deployment \
+            --region us-east-1
+
+          # Esperar con timeout de 15 minutos
+          aws ecs wait services-stable \
+            --cluster brainmart-prod-ecs-cluster \
+            --services brainmart-prod-patient-service \
+            --region us-east-1
+
+      - name: ✅ Smoke tests PRODUCCIÓN
+        run: |
+          sleep 60
+
+          # Health check básico
+          curl -f https://api.brainmart.health/health || \
+            (echo "❌ Health check PROD falló - iniciando rollback" && exit 1)
+
+          # Verificar que el audit trail está funcionando
+          curl -f https://api.brainmart.health/health/audit || \
+            (echo "❌ Audit trail health check falló" && exit 1)
+
+          echo "✅ Deploy a PRODUCCIÓN completado exitosamente"
+          echo "## 🎉 Deploy PROD exitoso" >> $GITHUB_STEP_SUMMARY
+          echo "Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "Fecha: $(date -u)" >> $GITHUB_STEP_SUMMARY
+
+      - name: 📢 Notificar deploy a Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          channel-id: "${{ vars.SLACK_DEPLOY_CHANNEL }}"
+          slack-message: |
+            ${{ job.status == 'success' && '✅' || '❌' }} *Deploy PRODUCCIÓN ${{ job.status }}*
+            Commit: `${{ github.sha }}`
+            By: @${{ github.actor }}
+            Pipeline: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}

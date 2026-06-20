@@ -1,0 +1,9 @@
+output "spa_bucket_id"              { value = aws_s3_bucket.spa.id }
+output "spa_bucket_arn"             { value = aws_s3_bucket.spa.arn }
+output "audit_bucket_id"            { value = aws_s3_bucket.audit.id }
+output "audit_bucket_arn"           { value = aws_s3_bucket.audit.arn }
+output "cloudfront_distribution_id" { value = aws_cloudfront_distribution.spa.id }
+output "cloudfront_domain_name"     { value = aws_cloudfront_distribution.spa.domain_name }
+output "waf_web_acl_arn"            { value = aws_wafv2_web_acl.cloudfront.arn }
+output "athena_database_name"       { value = aws_athena_database.audit.name }
+output "athena_workgroup_name"      { value = aws_athena_workgroup.audit.name }

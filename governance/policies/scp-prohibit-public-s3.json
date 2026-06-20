@@ -1,0 +1,60 @@
+{
+  "_comment": "SCP: Prohibir creación de buckets S3 públicos en toda la organización Brainmart",
+  "_compliance": "GDPR Art. 25 (Privacidad por diseño), FDA 21 CFR Part 11 §11.10(c)",
+  "_purpose": "Los datos de pacientes en ensayos clínicos son PHI y NUNCA deben ser públicos",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyPutPublicACLOnBuckets",
+      "Effect": "Deny",
+      "Action": "s3:PutBucketAcl",
+      "Resource": "*",
+      "Condition": {
+        "StringEqualsIgnoreCase": {
+          "s3:x-amz-acl": [
+            "public-read",
+            "public-read-write",
+            "authenticated-read"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyPutPublicACLOnObjects",
+      "Effect": "Deny",
+      "Action": "s3:PutObjectAcl",
+      "Resource": "*",
+      "Condition": {
+        "StringEqualsIgnoreCase": {
+          "s3:x-amz-acl": [
+            "public-read",
+            "public-read-write",
+            "authenticated-read"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyDisableBlockPublicAccess",
+      "Effect": "Deny",
+      "Action": "s3:PutBucketPublicAccessBlock",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "s3:BlockPublicAcls": "false"
+        }
+      }
+    },
+    {
+      "Sid": "DenyPublicBucketPolicy",
+      "Effect": "Deny",
+      "Action": "s3:PutBucketPolicy",
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "s3:ExistingObjectTag/Public": "true"
+        }
+      }
+    }
+  ]
+}

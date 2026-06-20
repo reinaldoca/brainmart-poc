@@ -1,0 +1,126 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "properties": {
+        "title": "🏥 Brainmart — Dashboard de Auditoría ALCOA+",
+        "view": "singleValue",
+        "metrics": [
+          ["Brainmart/prod", "AuditLogRecordsPerHour", {"label": "Registros/hora"}],
+          ["Brainmart/prod", "PatientRecordsCreated",  {"label": "Pacientes creados hoy"}],
+          ["Brainmart/prod", "PHIAccessEvents",        {"label": "Accesos PHI hoy"}]
+        ],
+        "period": 3600,
+        "stat": "Sum"
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "📊 Latencia API — p50/p95/p99",
+        "view": "timeSeries",
+        "metrics": [
+          ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "app/brainmart-prod-alb/XXXX",
+           {"stat": "p50",  "label": "p50"}],
+          ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "app/brainmart-prod-alb/XXXX",
+           {"stat": "p95",  "label": "p95"}],
+          ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "app/brainmart-prod-alb/XXXX",
+           {"stat": "p99",  "label": "p99 (objetivo: <500ms)", "color": "#d62728"}]
+        ],
+        "period": 60,
+        "yAxis": {"left": {"label": "Segundos", "max": 2}},
+        "annotations": {
+          "horizontal": [{"value": 0.5, "label": "SLO 500ms", "color": "#d62728"}]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "🔒 Seguridad — Eventos WAF",
+        "view": "timeSeries",
+        "metrics": [
+          ["AWS/WAFV2", "BlockedRequests",   "WebACL", "brainmart-prod-cloudfront-waf",
+           {"label": "Bloqueados", "color": "#d62728"}],
+          ["AWS/WAFV2", "AllowedRequests",   "WebACL", "brainmart-prod-cloudfront-waf",
+           {"label": "Permitidos", "color": "#2ca02c"}],
+          ["AWS/WAFV2", "CountedRequests",   "WebACL", "brainmart-prod-cloudfront-waf",
+           {"label": "Contados (monitoreados)"}]
+        ],
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "🗄️ Base de Datos RDS",
+        "view": "timeSeries",
+        "metrics": [
+          ["AWS/RDS", "CPUUtilization",    "DBInstanceIdentifier", "brainmart-prod-rds-postgres",
+           {"label": "CPU %", "yAxis": "left"}],
+          ["AWS/RDS", "DatabaseConnections", "DBInstanceIdentifier", "brainmart-prod-rds-postgres",
+           {"label": "Conexiones activas", "yAxis": "right"}],
+          ["AWS/RDS", "FreeStorageSpace", "DBInstanceIdentifier", "brainmart-prod-rds-postgres",
+           {"label": "Espacio libre (bytes)", "yAxis": "right", "stat": "Minimum"}]
+        ],
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "🐳 ECS Fargate — Tareas y CPU",
+        "view": "timeSeries",
+        "metrics": [
+          ["AWS/ECS", "CPUUtilization",    "ClusterName", "brainmart-prod-ecs-cluster",
+           "ServiceName", "brainmart-prod-patient-service", {"label": "CPU %"}],
+          ["AWS/ECS", "MemoryUtilization", "ClusterName", "brainmart-prod-ecs-cluster",
+           "ServiceName", "brainmart-prod-patient-service", {"label": "Memoria %"}]
+        ],
+        "period": 60,
+        "annotations": {
+          "horizontal": [
+            {"value": 70, "label": "Scale-out (CPU)", "color": "#ff7f0e"},
+            {"value": 80, "label": "Alarma", "color": "#d62728"}
+          ]
+        }
+      }
+    },
+    {
+      "type": "log",
+      "properties": {
+        "title": "📋 Últimas 50 Operaciones de Auditoría (CloudWatch Logs Insights)",
+        "query": "SOURCE '/aws/rds/instance/brainmart-prod-rds-postgres/postgresql'\n| filter @message like /audit/\n| parse @message '* * * * *' as timestamp, user, db, app, message\n| sort @timestamp desc\n| limit 50",
+        "region": "us-east-1",
+        "view": "table"
+      }
+    },
+    {
+      "type": "alarm",
+      "properties": {
+        "title": "🚨 Estado de Alarmas Críticas",
+        "alarms": [
+          "arn:aws:cloudwatch:us-east-1:444444444444:alarm:brainmart-prod-rds-cpu-high",
+          "arn:aws:cloudwatch:us-east-1:444444444444:alarm:brainmart-prod-rds-connections-high",
+          "arn:aws:cloudwatch:us-east-1:444444444444:alarm:brainmart-prod-alb-latency-p99-high",
+          "arn:aws:cloudwatch:us-east-1:444444444444:alarm:brainmart-prod-patient-service-cpu-high",
+          "arn:aws:cloudwatch:us-east-1:444444444444:alarm:brainmart-compliance-violation-detected"
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "🔑 KMS — Uso de Claves (Cifrado PHI)",
+        "view": "timeSeries",
+        "metrics": [
+          ["AWS/KMS", "NumberOfRequestsSucceeded", "KeyId", "alias/brainmart-prod-rds",
+           {"label": "Decrypt/Encrypt RDS"}],
+          ["AWS/KMS", "NumberOfRequestsSucceeded", "KeyId", "alias/brainmart-prod-secrets",
+           {"label": "Decrypt Secrets Manager"}]
+        ],
+        "period": 300
+      }
+    }
+  ]
+}

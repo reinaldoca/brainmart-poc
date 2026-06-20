@@ -1,0 +1,459 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  [Brainmart - Capa 0] StackSet que configura AWS Config Rules, GuardDuty
+  y CloudTrail en TODAS las cuentas de la organización.
+
+  PROPÓSITO: Detectar automáticamente desviaciones de compliance (drift).
+  Mientras las SCPs previenen, AWS Config DETECTA lo que escapó.
+  GuardDuty detecta amenazas activas. CloudTrail registra todo.
+
+  CUMPLIMIENTO:
+    - FDA 21 CFR Part 11 §11.10(e): Audit trails
+    - GCP ICH E6(R2) §5.5.3: Monitoreo de sistemas
+    - GDPR Art. 32: Seguridad del tratamiento
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: "brainmart"
+
+  ComplianceLevel:
+    Type: String
+    Default: "FDA-21CFR11-GCP-ALCOA"
+
+  AuditLogsBucketName:
+    Type: String
+    Description: >
+      Nombre del bucket S3 centralizado en la cuenta Shared-Services
+      donde se envían los logs de Config, CloudTrail y GuardDuty.
+    AllowedPattern: "^[a-z0-9][a-z0-9-]*[a-z0-9]$"
+
+  CloudTrailLogGroupName:
+    Type: String
+    Default: "/aws/cloudtrail/brainmart-org-trail"
+    Description: "Nombre del Log Group de CloudWatch para CloudTrail"
+
+  SNSAlertTopicArn:
+    Type: String
+    Description: "ARN del topic SNS para alertas de compliance"
+    AllowedPattern: "^arn:aws:sns:.*"
+
+Resources:
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # AWS CONFIG — Configuración del Recorder
+  # Registra el estado de configuración de TODOS los recursos de la cuenta.
+  # Es el punto de partida para todas las Config Rules.
+  # ────────────────────────────────────────────────────────────────────────────
+  ConfigRecorderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: BrainmartConfigRecorderRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWS_ConfigRole
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  ConfigDeliveryChannel:
+    Type: AWS::Config::DeliveryChannel
+    Properties:
+      Name: brainmart-config-delivery-channel
+      # Los snapshots de configuración se envían al bucket centralizado
+      # de auditoría en la cuenta Shared-Services
+      S3BucketName: !Ref AuditLogsBucketName
+      S3KeyPrefix: !Sub "config/${AWS::AccountId}/${AWS::Region}"
+      # Notificaciones SNS cuando cambia el estado de compliance
+      SnsTopicARN: !Ref SNSAlertTopicArn
+      ConfigSnapshotDeliveryProperties:
+        # Snapshot diario para evidencia de compliance continua
+        DeliveryFrequency: TwentyFour_Hours
+
+  ConfigRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    Properties:
+      Name: brainmart-config-recorder
+      RoleARN: !GetAtt ConfigRecorderRole.Arn
+      RecordingGroup:
+        # Registrar TODOS los tipos de recursos (no solo una lista)
+        # Necesario para detectar cualquier recurso no compliance
+        AllSupported: true
+        IncludeGlobalResourceTypes: true  # IAM, Route53, etc.
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # AWS CONFIG RULES — Detección de Incumplimientos
+  # Cada regla evalúa continuamente los recursos de la cuenta.
+  # Las violaciones generan alertas y aparecen en el dashboard de compliance.
+  # ────────────────────────────────────────────────────────────────────────────
+
+  # REGLA 1: S3 Block Public Access debe estar habilitado
+  ConfigRuleS3BlockPublicAccess:
+    Type: AWS::Config::ConfigRule
+    DependsOn: ConfigRecorder
+    Properties:
+      ConfigRuleName: brainmart-s3-block-public-access
+      Description: >
+        Verifica que todos los buckets S3 tengan block public access habilitado.
+        Requisito: GDPR Art. 25, FDA 21 CFR Part 11
+      Source:
+        Owner: AWS
+        SourceIdentifier: S3_BUCKET_LEVEL_PUBLIC_ACCESS_PROHIBITED
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::S3::Bucket
+      Tags:
+        - Key: ComplianceLevel
+          Value: !Ref ComplianceLevel
+
+  # REGLA 2: RDS debe tener cifrado en reposo
+  ConfigRuleRDSEncryption:
+    Type: AWS::Config::ConfigRule
+    DependsOn: ConfigRecorder
+    Properties:
+      ConfigRuleName: brainmart-rds-storage-encrypted
+      Description: >
+        Verifica que todas las instancias RDS tengan storage encryption habilitado.
+        Los datos de pacientes (PHI) deben estar cifrados. Req: FDA 21 CFR Part 11 §11.10(c)
+      Source:
+        Owner: AWS
+        SourceIdentifier: RDS_STORAGE_ENCRYPTED
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::RDS::DBInstance
+      Tags:
+        - Key: ComplianceLevel
+          Value: !Ref ComplianceLevel
+
+  # REGLA 3: RDS debe tener Multi-AZ en entornos de producción
+  ConfigRuleRDSMultiAZ:
+    Type: AWS::Config::ConfigRule
+    DependsOn: ConfigRecorder
+    Properties:
+      ConfigRuleName: brainmart-rds-multi-az
+      Description: >
+        Verifica que las instancias RDS tengan Multi-AZ habilitado.
+        Requisito: Alta disponibilidad para ensayos clínicos activos.
+      Source:
+        Owner: AWS
+        SourceIdentifier: RDS_MULTI_AZ_SUPPORT
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::RDS::DBInstance
+      Tags:
+        - Key: ComplianceLevel
+          Value: !Ref ComplianceLevel
+
+  # REGLA 4: RDS debe tener backup habilitado con retención mínima de 35 días
+  ConfigRuleRDSBackupRetention:
+    Type: AWS::Config::ConfigRule
+    DependsOn: ConfigRecorder
+    Properties:
+      ConfigRuleName: brainmart-rds-backup-retention-35days
+      Description: >
+        Verifica que las instancias RDS tengan backup retention >= 35 días.
+        Requisito: GCP ICH E6(R2) - retención de datos de ensayos clínicos
+      Source:
+        Owner: AWS
+        SourceIdentifier: DB_INSTANCE_BACKUP_ENABLED
+      InputParameters:
+        # Retención mínima de 35 días (requisito GCP)
+        backupRetentionMinimum: "35"
+        preferredBackupWindowSet: "true"
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::RDS::DBInstance
+      Tags:
+        - Key: ComplianceLevel
+          Value: !Ref ComplianceLevel
+
+  # REGLA 5: CloudTrail debe estar habilitado y logueando
+  ConfigRuleCloudTrailEnabled:
+    Type: AWS::Config::ConfigRule
+    DependsOn: ConfigRecorder
+    Properties:
+      ConfigRuleName: brainmart-cloudtrail-enabled
+      Description: >
+        Verifica que CloudTrail esté habilitado en la cuenta.
+        FDA 21 CFR Part 11 §11.10(e): audit trails de acciones de usuarios.
+      Source:
+        Owner: AWS
+        SourceIdentifier: CLOUD_TRAIL_ENABLED
+      # Esta regla se evalúa periódicamente, no solo cuando cambia un recurso
+      MaximumExecutionFrequency: TwentyFour_Hours
+      Tags:
+        - Key: ComplianceLevel
+          Value: !Ref ComplianceLevel
+
+  # REGLA 6: CloudTrail debe tener cifrado habilitado
+  ConfigRuleCloudTrailEncryption:
+    Type: AWS::Config::ConfigRule
+    DependsOn: ConfigRecorder
+    Properties:
+      ConfigRuleName: brainmart-cloudtrail-encryption-enabled
+      Description: >
+        Verifica que los logs de CloudTrail estén cifrados con KMS CMK.
+        Los logs de auditoría son evidencia regulatoria y deben estar protegidos.
+      Source:
+        Owner: AWS
+        SourceIdentifier: CLOUD_TRAIL_ENCRYPTION_ENABLED
+      MaximumExecutionFrequency: TwentyFour_Hours
+      Tags:
+        - Key: ComplianceLevel
+          Value: !Ref ComplianceLevel
+
+  # REGLA 7: KMS CMK debe tener rotación automática habilitada
+  ConfigRuleKMSRotation:
+    Type: AWS::Config::ConfigRule
+    DependsOn: ConfigRecorder
+    Properties:
+      ConfigRuleName: brainmart-kms-rotation-enabled
+      Description: >
+        Verifica que las KMS CMKs (Customer Managed Keys) tengan
+        rotación automática habilitada. Buena práctica criptográfica.
+      Source:
+        Owner: AWS
+        SourceIdentifier: CMK_BACKING_KEY_ROTATION_ENABLED
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::KMS::Key
+      Tags:
+        - Key: ComplianceLevel
+          Value: !Ref ComplianceLevel
+
+  # REGLA 8: VPC Flow Logs debe estar habilitado
+  ConfigRuleVPCFlowLogs:
+    Type: AWS::Config::ConfigRule
+    DependsOn: ConfigRecorder
+    Properties:
+      ConfigRuleName: brainmart-vpc-flow-logs-enabled
+      Description: >
+        Verifica que VPC Flow Logs esté habilitado en todas las VPCs.
+        Necesario para análisis forense y detección de exfiltración de datos.
+      Source:
+        Owner: AWS
+        SourceIdentifier: VPC_FLOW_LOGS_ENABLED
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::VPC
+      Tags:
+        - Key: ComplianceLevel
+          Value: !Ref ComplianceLevel
+
+  # REGLA 9: Secrets Manager debe tener rotación habilitada
+  ConfigRuleSecretsRotation:
+    Type: AWS::Config::ConfigRule
+    DependsOn: ConfigRecorder
+    Properties:
+      ConfigRuleName: brainmart-secretsmanager-rotation-enabled
+      Description: >
+        Verifica que todos los secretos en Secrets Manager tengan
+        rotación automática configurada.
+      Source:
+        Owner: AWS
+        SourceIdentifier: SECRETSMANAGER_ROTATION_ENABLED_CHECK
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::SecretsManager::Secret
+      Tags:
+        - Key: ComplianceLevel
+          Value: !Ref ComplianceLevel
+
+  # REGLA 10: Recursos DEBEN tener los tags de compliance obligatorios
+  ConfigRuleRequiredTags:
+    Type: AWS::Config::ConfigRule
+    DependsOn: ConfigRecorder
+    Properties:
+      ConfigRuleName: brainmart-required-compliance-tags
+      Description: >
+        Verifica que todos los recursos tengan los tags obligatorios:
+        Environment, Project, Owner, ComplianceLevel.
+        Para trazabilidad en auditorías FDA/GCP.
+      Source:
+        Owner: AWS
+        SourceIdentifier: REQUIRED_TAGS
+      InputParameters:
+        tag1Key: "Environment"
+        tag2Key: "Project"
+        tag3Key: "Owner"
+        tag4Key: "ComplianceLevel"
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::Instance
+          - AWS::RDS::DBInstance
+          - AWS::S3::Bucket
+          - AWS::ECS::Cluster
+          - AWS::ECS::Service
+      Tags:
+        - Key: ComplianceLevel
+          Value: !Ref ComplianceLevel
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # AWS GUARDDUTY — Detección de Amenazas
+  # GuardDuty usa machine learning para detectar comportamientos anómalos.
+  # En HealthTech: accesos inusuales a datos de pacientes = alerta crítica.
+  # ────────────────────────────────────────────────────────────────────────────
+  GuardDutyDetector:
+    Type: AWS::GuardDuty::Detector
+    Properties:
+      Enable: true
+      # FindingPublishingFrequency: cada 15 minutos para respuesta rápida
+      # (en lugar de TEN_MINUTES que puede generar ruido)
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+      DataSources:
+        # S3Protection: detecta acceso anómalo a buckets con datos de pacientes
+        S3Logs:
+          Enable: true
+        # MalwareProtection: escanea volúmenes EBS y ECS en busca de malware
+        MalwareProtection:
+          ScanEc2InstanceWithFindings:
+            EbsVolumes: true
+        # Kubernetes: si se expande a EKS en el futuro
+        Kubernetes:
+          AuditLogs:
+            Enable: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ComplianceLevel
+          Value: !Ref ComplianceLevel
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # AWS CLOUDTRAIL — Registro de Todas las Acciones
+  # Todo acceso a datos de pacientes debe quedar registrado.
+  # FDA 21 CFR Part 11 §11.10(e): audit trail completo e inalterado.
+  # ────────────────────────────────────────────────────────────────────────────
+  CloudTrailLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref CloudTrailLogGroupName
+      # Retención de 7 años para cumplir con FDA (mínimo 5 años para datos de ensayos)
+      RetentionInDays: 2555  # 7 años = 7 * 365 = 2555 días
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ComplianceLevel
+          Value: !Ref ComplianceLevel
+
+  CloudTrailLogGroupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: BrainmartCloudTrailCloudWatchRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudTrailToCloudWatchLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${CloudTrailLogGroupName}:*"
+
+  AccountCloudTrail:
+    Type: AWS::CloudTrail::Trail
+    DependsOn:
+      - CloudTrailLogGroup
+      - ConfigRecorder
+    Properties:
+      TrailName: brainmart-account-trail
+      # Logs van al bucket centralizado de auditoría
+      S3BucketName: !Ref AuditLogsBucketName
+      S3KeyPrefix: !Sub "cloudtrail/${AWS::AccountId}"
+      # También a CloudWatch Logs para alertas en tiempo real
+      CloudWatchLogsLogGroupArn: !GetAtt CloudTrailLogGroup.Arn
+      CloudWatchLogsRoleArn: !GetAtt CloudTrailLogGroupRole.Arn
+      # Habilitar en TODAS las regiones, no solo la región actual
+      IsMultiRegionTrail: true
+      # Incluir eventos de gestión Y de datos (acceso a S3, Lambda, DynamoDB)
+      IsLogging: true
+      # Validación de integridad: detecta si alguien modificó los logs
+      # CRÍTICO para FDA 21 CFR Part 11: los logs NO pueden ser alterados
+      EnableLogFileValidation: true
+      IncludeGlobalServiceEvents: true
+      EventSelectors:
+        # Registrar TODOS los accesos a buckets S3 de pacientes (lectura y escritura)
+        - ReadWriteType: All
+          IncludeManagementEvents: true
+          DataResources:
+            - Type: AWS::S3::Object
+              # Solo buckets de Brainmart para no generar demasiado ruido
+              Values:
+                - !Sub "arn:aws:s3:::brainmart-*/"
+            - Type: AWS::Lambda::Function
+              Values:
+                - "arn:aws:lambda"  # Todas las funciones Lambda
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ComplianceLevel
+          Value: !Ref ComplianceLevel
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # CLOUDWATCH ALARMS para violaciones de compliance detectadas por Config
+  # Cuando AWS Config detecta un recurso no compliance → alarma → SNS → Slack
+  # ────────────────────────────────────────────────────────────────────────────
+  ComplianceViolationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: brainmart-compliance-violation-detected
+      AlarmDescription: >
+        AWS Config detectó un recurso que no cumple con las reglas de compliance.
+        Acción inmediata requerida: revisar el recurso y remediar.
+      # Métrica de Config: NON_COMPLIANT_RULES
+      Namespace: AWS/Config
+      MetricName: NonCompliantRules
+      Dimensions:
+        - Name: AccountId
+          Value: !Ref AWS::AccountId
+      Statistic: Maximum
+      Period: 300  # 5 minutos
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SNSAlertTopicArn
+      OKActions:
+        - !Ref SNSAlertTopicArn
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  GuardDutyDetectorId:
+    Description: "ID del detector de GuardDuty"
+    Value: !Ref GuardDutyDetector
+    Export:
+      Name: !Sub "${AWS::StackName}-GuardDutyDetectorId"
+
+  CloudTrailArn:
+    Description: "ARN del CloudTrail de la cuenta"
+    Value: !GetAtt AccountCloudTrail.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudTrailArn"
+
+  ConfigRecorderName:
+    Description: "Nombre del Config Recorder"
+    Value: !Ref ConfigRecorder
+    Export:
+      Name: !Sub "${AWS::StackName}-ConfigRecorderName"
+
+  ComplianceRulesCount:
+    Description: "Número de Config Rules desplegadas"
+    Value: "10"
+    Export:
+      Name: !Sub "${AWS::StackName}-ComplianceRulesCount"

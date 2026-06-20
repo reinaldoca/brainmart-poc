@@ -1,0 +1,560 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  [Brainmart - Capa 0] StackSet que despliega Service Control Policies (SCPs)
+  en TODA la organización AWS para prevenir configuraciones inseguras.
+
+  ESTRATEGIA: Las SCPs son la última línea de defensa.
+  Incluso si un administrador tiene permisos completos en su cuenta,
+  las SCPs impiden acciones que violarían el compliance.
+
+  SCPs implementadas:
+    1. Prohibir buckets S3 públicos
+    2. Prohibir security groups con 0.0.0.0/0 en puertos críticos
+    3. Requerir cifrado en RDS, EBS y S3
+    4. Requerir tags de compliance en todos los recursos
+    5. Restringir regiones a us-east-1 y eu-west-1
+
+  CUMPLIMIENTO:
+    - FDA 21 CFR Part 11 §11.10(d): Control de acceso
+    - GDPR Art. 25: Privacidad por diseño
+    - GCP ICH E6(R2) §5.5: Sistemas computarizados
+
+Parameters:
+  OrganizationId:
+    Type: String
+    Description: "ID de la organización AWS (o-xxxxxxxxxx)"
+    AllowedPattern: "^o-[a-z0-9]{10,32}$"
+
+  RootOUId:
+    Type: String
+    Description: "ID del OU raíz donde se aplican las SCPs (ou-xxxx-xxxxxxxx)"
+
+  ProjectName:
+    Type: String
+    Default: "brainmart"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# NOTA SOBRE SCPs EN CLOUDFORMATION:
+# Las SCPs deben crearse via AWS Organizations API, no directamente en CF.
+# Este template crea los recursos auxiliares y llama a Custom Resources
+# para gestionar las SCPs via Lambda.
+# ──────────────────────────────────────────────────────────────────────────────
+Resources:
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Lambda que gestiona las SCPs via AWS Organizations API
+  # CloudFormation no tiene soporte nativo para SCPs, usamos Custom Resource
+  # ────────────────────────────────────────────────────────────────────────────
+  SCPManagerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "BrainmartSCPManager-${AWS::AccountId}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: OrganizationsSCPManagement
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - organizations:CreatePolicy
+                  - organizations:UpdatePolicy
+                  - organizations:DeletePolicy
+                  - organizations:AttachPolicy
+                  - organizations:DetachPolicy
+                  - organizations:DescribePolicy
+                  - organizations:ListPolicies
+                  - organizations:ListPoliciesForTarget
+                Resource: "*"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  SCPManagerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "brainmart-scp-manager-${AWS::AccountId}"
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt SCPManagerRole.Arn
+      Timeout: 300
+      Description: "Gestiona SCPs de la organización Brainmart via Custom Resource"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+      Code:
+        ZipFile: |
+          """
+          Lambda Custom Resource para gestionar Service Control Policies (SCPs).
+          Crea, actualiza y elimina SCPs en la organización AWS.
+          
+          Las SCPs son políticas preventivas que aplican a TODOS los usuarios/roles
+          en las cuentas miembro, incluyendo el root de la cuenta.
+          """
+          import json
+          import boto3
+          import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          org_client = boto3.client('organizations')
+
+          def handler(event, context):
+              """Maneja los eventos de CloudFormation Custom Resource"""
+              logger.info(f"Evento recibido: {json.dumps(event)}")
+              
+              request_type = event['RequestType']
+              props = event['ResourceProperties']
+              
+              try:
+                  if request_type == 'Create':
+                      policy_id = create_and_attach_scp(props)
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, 
+                                      {'PolicyId': policy_id})
+                  
+                  elif request_type == 'Update':
+                      # Actualizar el contenido de la SCP existente
+                      policy_id = event['PhysicalResourceId']
+                      org_client.update_policy(
+                          PolicyId=policy_id,
+                          Content=props['PolicyDocument'],
+                          Description=props.get('Description', ''),
+                      )
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS,
+                                      {'PolicyId': policy_id})
+                  
+                  elif request_type == 'Delete':
+                      policy_id = event['PhysicalResourceId']
+                      # Desadjuntar antes de eliminar
+                      target_id = props.get('TargetId')
+                      if target_id:
+                          try:
+                              org_client.detach_policy(
+                                  PolicyId=policy_id,
+                                  TargetId=target_id
+                              )
+                          except org_client.exceptions.PolicyNotAttachedException:
+                              pass  # Ya estaba desadjuntada
+                      org_client.delete_policy(PolicyId=policy_id)
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              
+              except Exception as e:
+                  logger.error(f"Error gestionando SCP: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, 
+                                  {'Error': str(e)})
+
+          def create_and_attach_scp(props):
+              """Crea la SCP y la adjunta al OU/cuenta objetivo"""
+              response = org_client.create_policy(
+                  Name=props['PolicyName'],
+                  Description=props.get('Description', ''),
+                  Content=props['PolicyDocument'],
+                  Type='SERVICE_CONTROL_POLICY'
+              )
+              policy_id = response['Policy']['PolicySummary']['Id']
+              
+              # Adjuntar al OU objetivo
+              target_id = props.get('TargetId')
+              if target_id:
+                  org_client.attach_policy(
+                      PolicyId=policy_id,
+                      TargetId=target_id
+                  )
+              
+              logger.info(f"SCP creada y adjuntada: {policy_id} → {target_id}")
+              return policy_id
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # SCP 1: PROHIBIR BUCKETS S3 PÚBLICOS
+  # Ningún usuario en ninguna cuenta puede crear buckets públicos.
+  # GDPR Art. 25 + FDA 11 CFR Part 11: los datos de ensayos clínicos
+  # NUNCA deben ser accesibles públicamente.
+  # ────────────────────────────────────────────────────────────────────────────
+  SCPProhibitPublicS3:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn: SCPManagerFunction
+    Properties:
+      ServiceToken: !GetAtt SCPManagerFunction.Arn
+      PolicyName: "Brainmart-Prohibit-Public-S3"
+      Description: >
+        Prohíbe la creación de buckets S3 públicos en todas las cuentas.
+        Requisito: FDA 21 CFR Part 11, GDPR Art. 25
+      TargetId: !Ref RootOUId
+      PolicyDocument: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "DenyPublicS3Buckets",
+              "Effect": "Deny",
+              "Action": [
+                "s3:PutBucketAcl",
+                "s3:PutObjectAcl"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "s3:x-amz-acl": [
+                    "public-read",
+                    "public-read-write",
+                    "authenticated-read"
+                  ]
+                }
+              }
+            },
+            {
+              "Sid": "DenyDisableS3BlockPublicAccess",
+              "Effect": "Deny",
+              "Action": [
+                "s3:PutBucketPublicAccessBlock"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "s3:BlockPublicAcls": "false",
+                  "s3:IgnorePublicAcls": "false",
+                  "s3:BlockPublicPolicy": "false",
+                  "s3:RestrictPublicBuckets": "false"
+                }
+              }
+            }
+          ]
+        }
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # SCP 2: PROHIBIR SECURITY GROUPS CON 0.0.0.0/0 EN PUERTOS SENSIBLES
+  # SSH (22), PostgreSQL (5432), MySQL (3306), SQL Server (1433)
+  # Ninguna base de datos debe ser accesible desde internet.
+  # ────────────────────────────────────────────────────────────────────────────
+  SCPProhibitOpenPorts:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn: SCPManagerFunction
+    Properties:
+      ServiceToken: !GetAtt SCPManagerFunction.Arn
+      PolicyName: "Brainmart-Prohibit-Open-DB-Ports"
+      Description: >
+        Prohíbe security groups con acceso 0.0.0.0/0 en puertos de BD y SSH.
+        Requisito: Mínimo privilegio de red
+      TargetId: !Ref RootOUId
+      PolicyDocument: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "DenyOpenSSHFromInternet",
+              "Effect": "Deny",
+              "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:AuthorizeSecurityGroupEgress"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "ec2:IpProtocol": "tcp"
+                },
+                "NumericEquals": {
+                  "ec2:FromPort": 22,
+                  "ec2:ToPort": 22
+                },
+                "IpAddressIfExists": {
+                  "ec2:SourceIp": [
+                    "0.0.0.0/0",
+                    "::/0"
+                  ]
+                }
+              }
+            },
+            {
+              "Sid": "DenyOpenPostgreSQLFromInternet",
+              "Effect": "Deny",
+              "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:AuthorizeSecurityGroupEgress"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "ec2:IpProtocol": "tcp"
+                },
+                "NumericEquals": {
+                  "ec2:FromPort": 5432,
+                  "ec2:ToPort": 5432
+                },
+                "IpAddressIfExists": {
+                  "ec2:SourceIp": [
+                    "0.0.0.0/0",
+                    "::/0"
+                  ]
+                }
+              }
+            },
+            {
+              "Sid": "DenyOpenMySQLFromInternet",
+              "Effect": "Deny",
+              "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:AuthorizeSecurityGroupEgress"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "ec2:IpProtocol": "tcp"
+                },
+                "NumericLessThanEquals": {
+                  "ec2:ToPort": 3306
+                },
+                "NumericGreaterThanEquals": {
+                  "ec2:FromPort": 3306
+                },
+                "IpAddressIfExists": {
+                  "ec2:SourceIp": [
+                    "0.0.0.0/0",
+                    "::/0"
+                  ]
+                }
+              }
+            },
+            {
+              "Sid": "DenyOpenSQLServerFromInternet",
+              "Effect": "Deny",
+              "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:AuthorizeSecurityGroupEgress"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "ec2:IpProtocol": "tcp"
+                },
+                "NumericLessThanEquals": {
+                  "ec2:ToPort": 1433
+                },
+                "NumericGreaterThanEquals": {
+                  "ec2:FromPort": 1433
+                },
+                "IpAddressIfExists": {
+                  "ec2:SourceIp": [
+                    "0.0.0.0/0",
+                    "::/0"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # SCP 3: REQUERIR CIFRADO EN TODOS LOS RECURSOS
+  # Los datos de pacientes en ensayos clínicos son PHI (Protected Health Info)
+  # y DEBEN estar cifrados en reposo.
+  # ────────────────────────────────────────────────────────────────────────────
+  SCPRequireEncryption:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn: SCPManagerFunction
+    Properties:
+      ServiceToken: !GetAtt SCPManagerFunction.Arn
+      PolicyName: "Brainmart-Require-Encryption"
+      Description: >
+        Requiere cifrado en RDS, EBS y S3 en todas las cuentas.
+        Requisito: FDA 21 CFR Part 11 §11.10(c), HIPAA §164.312(a)(2)(iv)
+      TargetId: !Ref RootOUId
+      PolicyDocument: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "DenyUnencryptedRDS",
+              "Effect": "Deny",
+              "Action": [
+                "rds:CreateDBInstance",
+                "rds:CreateDBCluster"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "Bool": {
+                  "rds:StorageEncrypted": "false"
+                }
+              }
+            },
+            {
+              "Sid": "DenyUnencryptedEBSVolumes",
+              "Effect": "Deny",
+              "Action": [
+                "ec2:CreateVolume",
+                "ec2:RunInstances"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "Bool": {
+                  "ec2:Encrypted": "false"
+                }
+              }
+            },
+            {
+              "Sid": "DenyDisableS3DefaultEncryption",
+              "Effect": "Deny",
+              "Action": "s3:PutEncryptionConfiguration",
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "s3:x-amz-server-side-encryption": "none"
+                }
+              }
+            },
+            {
+              "Sid": "DenyDisableRDSEncryptionAtRest",
+              "Effect": "Deny",
+              "Action": "rds:ModifyDBInstance",
+              "Resource": "*",
+              "Condition": {
+                "Bool": {
+                  "rds:StorageEncrypted": "false"
+                }
+              }
+            }
+          ]
+        }
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # SCP 4: RESTRINGIR REGIONES APROBADAS
+  # Solo us-east-1 (primaria) y eu-west-1 (DR/GDPR) están permitidas.
+  # Previene que datos de pacientes se almacenen en regiones no aprobadas.
+  # ────────────────────────────────────────────────────────────────────────────
+  SCPRestrictRegions:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn: SCPManagerFunction
+    Properties:
+      ServiceToken: !GetAtt SCPManagerFunction.Arn
+      PolicyName: "Brainmart-Restrict-Approved-Regions"
+      Description: >
+        Restringe el uso de AWS a las regiones aprobadas: us-east-1 y eu-west-1.
+        Requisito: GDPR Art. 44 - transferencias internacionales de datos
+      TargetId: !Ref RootOUId
+      PolicyDocument: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "DenyNonApprovedRegions",
+              "Effect": "Deny",
+              "NotAction": [
+                "a4b:*",
+                "acm:*",
+                "aws-marketplace-management:*",
+                "aws-marketplace:*",
+                "budgets:*",
+                "ce:*",
+                "chime:*",
+                "cloudfront:*",
+                "config:*",
+                "cur:*",
+                "directconnect:*",
+                "ec2:DescribeRegions",
+                "ec2:DescribeTransitGateways",
+                "ecr-public:*",
+                "globalaccelerator:*",
+                "health:*",
+                "iam:*",
+                "importexport:*",
+                "kms:*",
+                "mobileanalytics:*",
+                "networkmanager:*",
+                "organizations:*",
+                "pricing:*",
+                "route53:*",
+                "route53domains:*",
+                "s3:GetAccountPublic*",
+                "s3:ListAllMyBuckets",
+                "s3:PutAccountPublic*",
+                "shield:*",
+                "sts:*",
+                "support:*",
+                "trustedadvisor:*",
+                "waf-regional:*",
+                "waf:*",
+                "wafv2:*",
+                "wellarchitected:*"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringNotIn": {
+                  "aws:RequestedRegion": [
+                    "us-east-1",
+                    "eu-west-1"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # SCP 5: REQUERIR TAGS DE COMPLIANCE
+  # Todos los recursos deben tener los tags obligatorios para trazabilidad.
+  # FDA 21 CFR Part 11: los recursos deben ser identificables y trazables.
+  # ────────────────────────────────────────────────────────────────────────────
+  SCPRequireComplianceTags:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn: SCPManagerFunction
+    Properties:
+      ServiceToken: !GetAtt SCPManagerFunction.Arn
+      PolicyName: "Brainmart-Require-Compliance-Tags"
+      Description: >
+        Requiere que todos los recursos tengan tags: Environment, Project,
+        Owner, ComplianceLevel. Para trazabilidad regulatoria FDA/GCP.
+      TargetId: !Ref RootOUId
+      PolicyDocument: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "DenyResourcesWithoutComplianceTags",
+              "Effect": "Deny",
+              "Action": [
+                "ec2:RunInstances",
+                "ec2:CreateVolume",
+                "rds:CreateDBInstance",
+                "rds:CreateDBCluster",
+                "s3:CreateBucket",
+                "ecs:CreateCluster",
+                "ecs:CreateService"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "Null": {
+                  "aws:RequestTag/Environment": "true",
+                  "aws:RequestTag/Project": "true",
+                  "aws:RequestTag/Owner": "true",
+                  "aws:RequestTag/ComplianceLevel": "true"
+                }
+              }
+            }
+          ]
+        }
+
+Outputs:
+  SCPProhibitPublicS3PolicyId:
+    Description: "ID de la SCP que prohíbe buckets S3 públicos"
+    Value: !GetAtt SCPProhibitPublicS3.PolicyId
+
+  SCPProhibitOpenPortsPolicyId:
+    Description: "ID de la SCP que prohíbe puertos abiertos a internet"
+    Value: !GetAtt SCPProhibitOpenPorts.PolicyId
+
+  SCPRequireEncryptionPolicyId:
+    Description: "ID de la SCP que requiere cifrado en reposo"
+    Value: !GetAtt SCPRequireEncryption.PolicyId
+
+  SCPRestrictRegionsPolicyId:
+    Description: "ID de la SCP que restringe regiones aprobadas"
+    Value: !GetAtt SCPRestrictRegions.PolicyId

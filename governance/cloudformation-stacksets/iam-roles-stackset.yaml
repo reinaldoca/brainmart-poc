@@ -1,0 +1,465 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  [Brainmart - Capa 0] StackSet que crea el rol IAM BrainmartTerragruntRole
+  en CADA cuenta de la organización AWS.
+
+  PROPÓSITO: Permite que Terragrunt (ejecutándose en la cuenta Shared-Services)
+  asuma este rol en cada cuenta miembro para desplegar infraestructura.
+  Principio de mínimo privilegio: NO se usa AdministratorAccess.
+
+  CUMPLIMIENTO: FDA 21 CFR Part 11 §11.10(d) - Control de acceso
+                GCP ICH E6(R2) §5.5.3 - Sistemas computarizados
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PARÁMETROS
+# Valores que se pasan al desplegar el StackSet desde la cuenta Master
+# ──────────────────────────────────────────────────────────────────────────────
+Parameters:
+  SharedServicesAccountId:
+    Type: String
+    Description: >
+      ID de la cuenta Shared-Services desde donde Terragrunt asume roles.
+      Solo esta cuenta puede asumir el rol (mínimo privilegio).
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: "Debe ser un ID de cuenta AWS de 12 dígitos"
+
+  ProjectName:
+    Type: String
+    Default: "brainmart"
+    Description: "Nombre del proyecto para etiquetar recursos"
+
+  ComplianceLevel:
+    Type: String
+    Default: "FDA-21CFR11-GCP-ALCOA"
+    Description: "Nivel de cumplimiento regulatorio para tagging"
+
+  MaxSessionDurationSeconds:
+    Type: Number
+    Default: 3600
+    MinValue: 900
+    MaxValue: 43200
+    Description: >
+      Duración máxima de la sesión asumida.
+      1 hora (3600s) es suficiente para un plan+apply de Terraform.
+      Mantener bajo para reducir ventana de exposición en caso de compromiso.
+
+# ──────────────────────────────────────────────────────────────────────────────
+# RECURSOS
+# ──────────────────────────────────────────────────────────────────────────────
+Resources:
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # ROL PRINCIPAL: BrainmartTerragruntRole
+  # Terragrunt asume este rol para desplegar infraestructura en cada cuenta
+  # ────────────────────────────────────────────────────────────────────────────
+  TerragruntExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: BrainmartTerragruntRole
+      Description: >
+        Rol asumido por Terragrunt (desde Shared-Services) para gestionar
+        infraestructura en esta cuenta. Creado via StackSet para consistencia
+        en toda la organización.
+      MaxSessionDuration: !Ref MaxSessionDurationSeconds
+
+      # ── Trust Policy: solo la cuenta Shared-Services puede asumir este rol ──
+      # Se agrega condición ExternalId para prevenir confused deputy attacks
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowTerragruntAssumeRole
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${SharedServicesAccountId}:root"
+            Action: sts:AssumeRole
+            Condition:
+              # ExternalId actúa como segundo factor de autenticación
+              # Previene que otros servicios en Shared-Services asuman el rol sin saber el secreto
+              StringEquals:
+                sts:ExternalId: !Sub "brainmart-terragrunt-${AWS::AccountId}"
+              # Solo permitir assume-role con MFA habilitado (para usuarios humanos)
+              # Los pipelines de CI/CD usan IAM Roles con OIDC, no necesitan MFA
+              Bool:
+                aws:MultiFactorAuthPresent: false  # false = también permite roles (CI/CD)
+
+      # ── Políticas gestionadas base ──
+      ManagedPolicyArns:
+        # ReadOnly como base - los permisos de escritura se otorgan explícitamente abajo
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+
+      # ── Políticas inline con permisos específicos de escritura ──
+      Policies:
+        - PolicyName: TerraformNetworkPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: VPCManagement
+                Effect: Allow
+                Action:
+                  - ec2:CreateVpc
+                  - ec2:DeleteVpc
+                  - ec2:ModifyVpcAttribute
+                  - ec2:CreateSubnet
+                  - ec2:DeleteSubnet
+                  - ec2:ModifySubnetAttribute
+                  - ec2:CreateInternetGateway
+                  - ec2:DeleteInternetGateway
+                  - ec2:AttachInternetGateway
+                  - ec2:DetachInternetGateway
+                  - ec2:CreateNatGateway
+                  - ec2:DeleteNatGateway
+                  - ec2:CreateRouteTable
+                  - ec2:DeleteRouteTable
+                  - ec2:CreateRoute
+                  - ec2:DeleteRoute
+                  - ec2:AssociateRouteTable
+                  - ec2:DisassociateRouteTable
+                  - ec2:CreateSecurityGroup
+                  - ec2:DeleteSecurityGroup
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:CreateVpcEndpoint
+                  - ec2:DeleteVpcEndpoints
+                  - ec2:ModifyVpcEndpoint
+                  - ec2:AllocateAddress
+                  - ec2:ReleaseAddress
+                  - ec2:AssociateAddress
+                  - ec2:DisassociateAddress
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                Resource: "*"
+                # Condición: solo en las regiones aprobadas
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      - us-east-1   # Región primaria
+                      - eu-west-1   # Región DR (GDPR)
+
+        - PolicyName: TerraformDatabasePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: RDSManagement
+                Effect: Allow
+                Action:
+                  - rds:CreateDBInstance
+                  - rds:DeleteDBInstance
+                  - rds:ModifyDBInstance
+                  - rds:RebootDBInstance
+                  - rds:CreateDBSubnetGroup
+                  - rds:DeleteDBSubnetGroup
+                  - rds:ModifyDBSubnetGroup
+                  - rds:CreateDBParameterGroup
+                  - rds:DeleteDBParameterGroup
+                  - rds:ModifyDBParameterGroup
+                  - rds:CreateDBCluster
+                  - rds:DeleteDBCluster
+                  - rds:ModifyDBCluster
+                  - rds:CreateDBClusterParameterGroup
+                  - rds:CreateDBSnapshot
+                  - rds:DeleteDBSnapshot
+                  - rds:RestoreDBInstanceFromDBSnapshot
+                  - rds:AddTagsToResource
+                  - rds:RemoveTagsFromResource
+                  - rds:ListTagsForResource
+                  - rds:CreateEventSubscription
+                  - rds:DeleteEventSubscription
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      - us-east-1
+                      - eu-west-1
+              - Sid: RDSNoUnencrypted
+                Effect: Deny
+                Action:
+                  - rds:CreateDBInstance
+                  - rds:CreateDBCluster
+                Resource: "*"
+                Condition:
+                  # DENEGACIÓN explícita de crear RDS sin cifrado
+                  # Esto es redundante con los SCPs pero agrega defensa en profundidad
+                  Bool:
+                    rds:StorageEncrypted: false
+
+        - PolicyName: TerraformComputePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ECSManagement
+                Effect: Allow
+                Action:
+                  - ecs:CreateCluster
+                  - ecs:DeleteCluster
+                  - ecs:UpdateCluster
+                  - ecs:CreateService
+                  - ecs:DeleteService
+                  - ecs:UpdateService
+                  - ecs:RegisterTaskDefinition
+                  - ecs:DeregisterTaskDefinition
+                  - ecs:TagResource
+                  - ecs:UntagResource
+                  - ecs:PutClusterCapacityProviders
+                  - application-autoscaling:RegisterScalableTarget
+                  - application-autoscaling:DeregisterScalableTarget
+                  - application-autoscaling:PutScalingPolicy
+                  - application-autoscaling:DeleteScalingPolicy
+                  - servicediscovery:CreatePrivateDnsNamespace
+                  - servicediscovery:DeleteNamespace
+                  - servicediscovery:CreateService
+                  - servicediscovery:DeleteService
+                  - servicediscovery:UpdateService
+                Resource: "*"
+
+        - PolicyName: TerraformStoragePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: S3BucketManagement
+                Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:DeleteBucket
+                  - s3:PutBucketPolicy
+                  - s3:DeleteBucketPolicy
+                  - s3:PutBucketAcl
+                  - s3:PutBucketVersioning
+                  - s3:PutBucketEncryption
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:PutBucketCORS
+                  - s3:PutBucketLogging
+                  - s3:PutBucketNotification
+                  - s3:PutLifecycleConfiguration
+                  - s3:PutReplicationConfiguration
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                  - s3:GetBucketPolicy
+                  - s3:GetBucketAcl
+                  - s3:GetBucketVersioning
+                  - s3:GetBucketEncryption
+                  - s3:GetBucketPublicAccessBlock
+                Resource:
+                  - !Sub "arn:aws:s3:::brainmart-*"
+                  - !Sub "arn:aws:s3:::brainmart-*/*"
+              - Sid: DenyPublicBuckets
+                Effect: Deny
+                Action:
+                  - s3:PutBucketAcl
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    s3:x-amz-acl:
+                      - public-read
+                      - public-read-write
+                      - authenticated-read
+
+        - PolicyName: TerraformSecretsKMSPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: SecretsManagerManagement
+                Effect: Allow
+                Action:
+                  - secretsmanager:CreateSecret
+                  - secretsmanager:DeleteSecret
+                  - secretsmanager:UpdateSecret
+                  - secretsmanager:PutSecretValue
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                  - secretsmanager:ListSecrets
+                  - secretsmanager:TagResource
+                  - secretsmanager:UntagResource
+                  - secretsmanager:RotateSecret
+                  - secretsmanager:CancelRotateSecret
+                  - secretsmanager:PutResourcePolicy
+                  - secretsmanager:DeleteResourcePolicy
+                Resource: !Sub "arn:aws:secretsmanager:*:${AWS::AccountId}:secret:brainmart-*"
+              - Sid: KMSManagement
+                Effect: Allow
+                Action:
+                  - kms:CreateKey
+                  - kms:DeleteKey
+                  - kms:DescribeKey
+                  - kms:EnableKey
+                  - kms:DisableKey
+                  - kms:EnableKeyRotation
+                  - kms:DisableKeyRotation
+                  - kms:GetKeyPolicy
+                  - kms:PutKeyPolicy
+                  - kms:CreateAlias
+                  - kms:DeleteAlias
+                  - kms:UpdateAlias
+                  - kms:TagResource
+                  - kms:UntagResource
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:ReEncrypt*
+                  - kms:GenerateDataKey*
+                Resource: "*"
+
+        - PolicyName: TerraformIAMPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: IAMRoleManagement
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:UpdateRole
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:CreateInstanceProfile
+                  - iam:DeleteInstanceProfile
+                  - iam:AddRoleToInstanceProfile
+                  - iam:RemoveRoleFromInstanceProfile
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:PassRole
+                Resource:
+                  # Solo puede gestionar roles con el prefijo brainmart-
+                  # Previene escalada de privilegios
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/brainmart-*"
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:instance-profile/brainmart-*"
+
+        - PolicyName: TerraformMonitoringPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudWatchManagement
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:PutDashboard
+                  - cloudwatch:DeleteDashboards
+                  - cloudwatch:PutMetricData
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                  - logs:DeleteRetentionPolicy
+                  - logs:CreateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
+                  - sns:Subscribe
+                  - sns:Unsubscribe
+                  - sns:SetTopicAttributes
+                  - sns:GetTopicAttributes
+                  - sns:TagResource
+                Resource: "*"
+
+        - PolicyName: TerraformStateBackendPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: TerraformStateS3Access
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                  - s3:GetBucketVersioning
+                Resource:
+                  # Solo puede acceder al bucket de estado de Terraform
+                  - !Sub "arn:aws:s3:::brainmart-tfstate-${AWS::AccountId}-*"
+                  - !Sub "arn:aws:s3:::brainmart-tfstate-${AWS::AccountId}-*/*"
+              - Sid: TerraformStateDynamoDBLock
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:DeleteItem
+                Resource: !Sub "arn:aws:dynamodb:*:${AWS::AccountId}:table/brainmart-tfstate-lock"
+
+      Tags:
+        - Key: Name
+          Value: BrainmartTerragruntRole
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: CloudFormation-StackSet
+        - Key: ComplianceLevel
+          Value: !Ref ComplianceLevel
+        - Key: Purpose
+          Value: TerragruntExecution
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # ROL SECUNDARIO: BrainmartReadOnlyRole
+  # Para auditores y herramientas de compliance que solo necesitan lectura
+  # FDA 21 CFR Part 11: los auditores deben poder revisar sin modificar
+  # ────────────────────────────────────────────────────────────────────────────
+  ReadOnlyAuditRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: BrainmartAuditorRole
+      Description: >
+        Rol de solo lectura para auditores FDA/GCP y herramientas de compliance.
+        No puede modificar ningún recurso.
+      MaxSessionDuration: 3600  # 1 hora máximo para sesiones de auditoría
+
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowAuditorAssumeRole
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${SharedServicesAccountId}:root"
+            Action: sts:AssumeRole
+            Condition:
+              # Los auditores DEBEN usar MFA
+              Bool:
+                aws:MultiFactorAuthPresent: true
+              StringEquals:
+                sts:ExternalId: !Sub "brainmart-auditor-${AWS::AccountId}"
+
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+        - arn:aws:iam::aws:policy/SecurityAudit  # Acceso adicional a logs de seguridad
+
+      Tags:
+        - Key: Name
+          Value: BrainmartAuditorRole
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: CloudFormation-StackSet
+        - Key: Purpose
+          Value: FDAGCPAudit
+
+# ──────────────────────────────────────────────────────────────────────────────
+# OUTPUTS
+# Exportados para referencia desde otros StackSets o scripts
+# ──────────────────────────────────────────────────────────────────────────────
+Outputs:
+  TerragruntRoleArn:
+    Description: "ARN del rol que usa Terragrunt para deployar en esta cuenta"
+    Value: !GetAtt TerragruntExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-TerragruntRoleArn"
+
+  AuditorRoleArn:
+    Description: "ARN del rol de solo lectura para auditores FDA/GCP"
+    Value: !GetAtt ReadOnlyAuditRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-AuditorRoleArn"
+
+  AccountId:
+    Description: "ID de la cuenta donde fue desplegado este StackSet"
+    Value: !Ref AWS::AccountId
+    Export:
+      Name: !Sub "${AWS::StackName}-AccountId"

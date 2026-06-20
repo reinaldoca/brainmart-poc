@@ -1,0 +1,107 @@
+{
+  "_comment": "SCP: Requerir cifrado en todos los recursos con datos de pacientes",
+  "_compliance": "FDA 21 CFR Part 11 §11.10(c), HIPAA §164.312(a)(2)(iv), GDPR Art. 32",
+  "_purpose": "Datos de PHI (Protected Health Information) DEBEN estar cifrados en reposo",
+  "_encryption_requirements": {
+    "RDS": "KMS CMK obligatorio (no SSE-S3 genérico)",
+    "S3": "AES-256 o KMS mínimo",
+    "EBS": "KMS CMK obligatorio",
+    "Secrets Manager": "KMS CMK obligatorio"
+  },
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyUnencryptedRDSInstances",
+      "Effect": "Deny",
+      "Action": [
+        "rds:CreateDBInstance",
+        "rds:CreateDBCluster",
+        "rds:RestoreDBInstanceFromDBSnapshot",
+        "rds:RestoreDBInstanceToPointInTime",
+        "rds:RestoreDBClusterFromSnapshot"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Bool": {
+          "rds:StorageEncrypted": "false"
+        }
+      }
+    },
+    {
+      "Sid": "DenyUnencryptedEBSVolumes",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:CreateVolume",
+        "ec2:RunInstances"
+      ],
+      "Resource": "arn:aws:ec2:*:*:volume/*",
+      "Condition": {
+        "Bool": {
+          "ec2:Encrypted": "false"
+        }
+      }
+    },
+    {
+      "Sid": "DenyUnencryptedEBSSnapshots",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:CreateSnapshot",
+        "ec2:CopySnapshot"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Bool": {
+          "ec2:Encrypted": "false"
+        }
+      }
+    },
+    {
+      "Sid": "DenyDisableS3DefaultEncryption",
+      "Effect": "Deny",
+      "Action": "s3:PutEncryptionConfiguration",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "s3:x-amz-server-side-encryption": "none"
+        }
+      }
+    },
+    {
+      "Sid": "DenyUnencryptedSNSMessages",
+      "Effect": "Deny",
+      "Action": "sns:CreateTopic",
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "sns:KmsMasterKeyId": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyDisableKMSKeyRotation",
+      "Effect": "Deny",
+      "Action": "kms:DisableKeyRotation",
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyKMSKeyDeletion",
+      "Effect": "Deny",
+      "Action": [
+        "kms:ScheduleKeyDeletion",
+        "kms:DeleteImportedKeyMaterial"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "kms:CallerAccount": "${aws:PrincipalAccount}"
+        },
+        "ArnNotLike": {
+          "aws:PrincipalARN": [
+            "arn:aws:iam::*:role/BrainmartTerragruntRole",
+            "arn:aws:iam::*:role/BrainmartKMSAdmin"
+          ]
+        }
+      }
+    }
+  ]
+}

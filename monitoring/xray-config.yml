@@ -1,0 +1,79 @@
+
+# X-Ray configuration for Brainmart Patient Service
+# ─────────────────────────────────────────────────────────────────────────────
+# Configura el sampling de trazas X-Ray para los microservicios .NET 8
+# Balance entre observabilidad (más trazas = más costo) y cobertura
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: 2
+
+# Reglas de sampling: definen qué porcentaje de requests se tracean
+# Las reglas se evalúan en orden de prioridad (menor número = mayor prioridad)
+rules:
+
+  # Regla 1: Siempre trazar requests de auditoría (para FDA compliance evidence)
+  - description: "Trazar 100% de los accesos al audit trail"
+    host: "*"
+    http_method: "GET"
+    url_path: "/api/v1/patients/*/audit-trail"
+    fixed_target: 0    # Sin límite fijo
+    rate: 1.0          # 100% de las requests
+    priority: 1
+    service_name: "patient-service"
+
+  # Regla 2: Siempre trazar creación de pacientes (operación crítica)
+  - description: "Trazar 100% de la creación de nuevos pacientes"
+    host: "*"
+    http_method: "POST"
+    url_path: "/api/v1/patients"
+    fixed_target: 0
+    rate: 1.0
+    priority: 2
+    service_name: "patient-service"
+
+  # Regla 3: Trazar anonimizaciones (evento regulatorio crítico GDPR)
+  - description: "Trazar 100% de las anonimizaciones GDPR"
+    host: "*"
+    http_method: "POST"
+    url_path: "/api/v1/patients/*/anonymize"
+    fixed_target: 0
+    rate: 1.0
+    priority: 3
+    service_name: "patient-service"
+
+  # Regla 4: Health checks — no trazar (generan demasiado ruido)
+  - description: "No trazar health checks del ALB"
+    host: "*"
+    http_method: "GET"
+    url_path: "/health*"
+    fixed_target: 0
+    rate: 0.0          # 0% = no trazar
+    priority: 4
+    service_name: "patient-service"
+
+  # Regla por defecto: 5% del resto del tráfico
+  - description: "Default sampling rule: 5% del tráfico general"
+    host: "*"
+    http_method: "*"
+    url_path: "*"
+    fixed_target: 1    # Al menos 1 request/segundo siempre
+    rate: 0.05         # 5% del tráfico restante
+    priority: 9999
+    service_name: "*"
+
+# Configuración del daemon X-Ray (sidecar en ECS)
+daemon_address: "127.0.0.1:2000"
+
+# Grupos de X-Ray para filtrar trazas en la consola
+groups:
+  - group_name: "PHIAccess"
+    filter_expression: "annotation.contains(\"action\", \"PHI\")"
+    insights_enabled: true
+
+  - group_name: "SlowRequests"
+    filter_expression: "responsetime > 0.5"
+    insights_enabled: true
+
+  - group_name: "Errors"
+    filter_expression: "error OR fault"
+    insights_enabled: true

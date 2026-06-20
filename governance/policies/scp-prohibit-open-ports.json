@@ -1,0 +1,127 @@
+{
+  "_comment": "SCP: Prohibir Security Groups con 0.0.0.0/0 en puertos críticos de base de datos",
+  "_compliance": "NIST SP 800-53 SC-7 (Protección de límites), CIS AWS Benchmark 4.1-4.4",
+  "_purpose": "Las bases de datos de ensayos clínicos NO pueden ser accesibles desde internet",
+  "_ports_blocked": {
+    "22": "SSH - acceso remoto directo a servidores",
+    "5432": "PostgreSQL - base de datos de pacientes",
+    "3306": "MySQL - base de datos alternativa",
+    "1433": "SQL Server - base de datos Windows"
+  },
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyOpenSSH22FromInternet",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress"
+      ],
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:IpProtocol": "tcp"
+        },
+        "NumericEquals": {
+          "ec2:FromPort": 22,
+          "ec2:ToPort": 22
+        },
+        "IpAddressIfExists": {
+          "ec2:SourceIp": [
+            "0.0.0.0/0",
+            "::/0"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyOpenPostgreSQL5432FromInternet",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress"
+      ],
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:IpProtocol": "tcp"
+        },
+        "NumericEquals": {
+          "ec2:FromPort": 5432,
+          "ec2:ToPort": 5432
+        },
+        "IpAddressIfExists": {
+          "ec2:SourceIp": [
+            "0.0.0.0/0",
+            "::/0"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyOpenMySQL3306FromInternet",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress"
+      ],
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:IpProtocol": "tcp"
+        },
+        "NumericEquals": {
+          "ec2:FromPort": 3306,
+          "ec2:ToPort": 3306
+        },
+        "IpAddressIfExists": {
+          "ec2:SourceIp": [
+            "0.0.0.0/0",
+            "::/0"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyOpenSQLServer1433FromInternet",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress"
+      ],
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:IpProtocol": "tcp"
+        },
+        "NumericEquals": {
+          "ec2:FromPort": 1433,
+          "ec2:ToPort": 1433
+        },
+        "IpAddressIfExists": {
+          "ec2:SourceIp": [
+            "0.0.0.0/0",
+            "::/0"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyWildcardIngressAllPorts",
+      "Effect": "Deny",
+      "Action": "ec2:AuthorizeSecurityGroupIngress",
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:IpProtocol": "-1"
+        },
+        "IpAddressIfExists": {
+          "ec2:SourceIp": [
+            "0.0.0.0/0",
+            "::/0"
+          ]
+        }
+      }
+    }
+  ]
+}

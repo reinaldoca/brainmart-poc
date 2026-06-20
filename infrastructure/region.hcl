@@ -1,0 +1,50 @@
+# ??????????????????????????????????????????????????????????????????????????????
+# infrastructure/region.hcl
+#
+# PROPO?SITO: Mapeo centralizado de regiones por ambiente.
+# Define que? regio?n AWS usa cada ambiente y sus configuraciones especi?ficas.
+#
+# ESTRATEGIA DE REGIONES:
+#   - us-east-1 (Virginia): regio?n primaria para todos los ambientes
+#   - eu-west-1 (Irlanda): solo para produccio?n DR y datos GDPR
+#
+# GDPR COMPLIANCE: Los datos de pacientes europeos que se replican a eu-west-1
+# cumplen con el requisito de residencia de datos de la UE (GDPR Art. 44).
+# ??????????????????????????????????????????????????????????????????????????????
+
+locals {
+  # Regio?n primaria: la regio?n donde se despliega el ambiente actual
+  # Este valor se sobreescribe en el region.hcl de cada subdirectorio
+  aws_region = "us-east-1"
+
+  # Regio?n de DR: solo activa en produccio?n
+  dr_region = "eu-west-1"
+
+  # Mapeo completo de regiones por ambiente
+  regions = {
+    dev = {
+      primary = "us-east-1"
+      dr      = null  # Dev no tiene DR (no es necesario ni costeable)
+    }
+    staging = {
+      primary = "us-east-1"
+      dr      = null  # Staging tampoco tiene DR
+    }
+    prod = {
+      primary = "us-east-1"  # Regio?n primaria de produccio?n
+      dr      = "eu-west-1"  # DR en EU para GDPR y continuidad de negocio
+    }
+    shared-services = {
+      primary = "us-east-1"
+      dr      = null
+    }
+  }
+
+  # ?? Configuracio?n de Availability Zones por regio?n ??
+  # Definidas expli?citamente para que los mo?dulos de red sean reproducibles
+  # (las AZs disponibles vari?an por cuenta y pueden cambiar con el tiempo)
+  azs = {
+    "us-east-1" = ["us-east-1a", "us-east-1b", "us-east-1c"]
+    "eu-west-1" = ["eu-west-1a", "eu-west-1b", "eu-west-1c"]
+  }
+}

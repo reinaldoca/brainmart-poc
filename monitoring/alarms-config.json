@@ -1,0 +1,81 @@
+{
+  "alarms": [
+    {
+      "AlarmName": "brainmart-prod-rds-cpu-high",
+      "AlarmDescription": "CPU de RDS prod > 80% durante 10 min. Investigar queries lentas en Performance Insights.",
+      "Namespace": "AWS/RDS",
+      "MetricName": "CPUUtilization",
+      "Statistic": "Average",
+      "Period": 300,
+      "EvaluationPeriods": 2,
+      "Threshold": 80,
+      "ComparisonOperator": "GreaterThanThreshold",
+      "Dimensions": [{"Name": "DBInstanceIdentifier", "Value": "brainmart-prod-rds-postgres"}],
+      "TreatMissingData": "notBreaching",
+      "Actions": ["arn:aws:sns:us-east-1:444444444444:brainmart-prod-alerts"]
+    },
+    {
+      "AlarmName": "brainmart-prod-alb-latency-p99-high",
+      "AlarmDescription": "Latencia p99 del API > 500ms. SLO violado. Revisar X-Ray para cuellos de botella.",
+      "Namespace": "AWS/ApplicationELB",
+      "MetricName": "TargetResponseTime",
+      "ExtendedStatistic": "p99",
+      "Period": 300,
+      "EvaluationPeriods": 3,
+      "Threshold": 0.5,
+      "ComparisonOperator": "GreaterThanThreshold",
+      "TreatMissingData": "notBreaching",
+      "Actions": ["arn:aws:sns:us-east-1:444444444444:brainmart-prod-alerts"]
+    },
+    {
+      "AlarmName": "brainmart-prod-rds-connections-high",
+      "AlarmDescription": "Conexiones de BD > 90% del máximo. Riesgo de rechazo de conexiones. Revisar connection pooling.",
+      "Namespace": "AWS/RDS",
+      "MetricName": "DatabaseConnections",
+      "Statistic": "Average",
+      "Period": 300,
+      "EvaluationPeriods": 2,
+      "Threshold": 150,
+      "ComparisonOperator": "GreaterThanThreshold",
+      "TreatMissingData": "notBreaching",
+      "Actions": ["arn:aws:sns:us-east-1:444444444444:brainmart-prod-alerts"]
+    },
+    {
+      "AlarmName": "brainmart-compliance-violation-detected",
+      "AlarmDescription": "AWS Config detectó recurso no compliance. ACCIÓN INMEDIATA REQUERIDA. Revisar Config Dashboard.",
+      "Namespace": "AWS/Config",
+      "MetricName": "NonCompliantRules",
+      "Statistic": "Maximum",
+      "Period": 300,
+      "EvaluationPeriods": 1,
+      "Threshold": 0,
+      "ComparisonOperator": "GreaterThanThreshold",
+      "TreatMissingData": "notBreaching",
+      "Actions": ["arn:aws:sns:us-east-1:444444444444:brainmart-prod-critical-alerts"]
+    },
+    {
+      "AlarmName": "brainmart-prod-audit-export-failure",
+      "AlarmDescription": "La Lambda de exportación de audit_log a S3 falló. Los registros de auditoría ALCOA+ no se están archivando.",
+      "Namespace": "AWS/Lambda",
+      "MetricName": "Errors",
+      "Statistic": "Sum",
+      "Period": 3600,
+      "EvaluationPeriods": 1,
+      "Threshold": 0,
+      "ComparisonOperator": "GreaterThanThreshold",
+      "Dimensions": [{"Name": "FunctionName", "Value": "brainmart-prod-audit-log-export"}],
+      "TreatMissingData": "breaching",
+      "Actions": ["arn:aws:sns:us-east-1:444444444444:brainmart-prod-critical-alerts"]
+    }
+  ],
+  "sns_to_slack_lambda": {
+    "description": "Lambda que convierte mensajes SNS en notificaciones de Slack formateadas",
+    "function_name": "brainmart-prod-sns-to-slack",
+    "slack_webhook_secret": "arn:aws:secretsmanager:us-east-1:444444444444:secret:brainmart-prod/integrations/slack-webhook",
+    "channels": {
+      "default": "#brainmart-alerts",
+      "critical": "#brainmart-incidents",
+      "compliance": "#brainmart-compliance"
+    }
+  }
+}

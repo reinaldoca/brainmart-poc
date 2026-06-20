@@ -1,0 +1,94 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# pipeline/.github/workflows/sbom-generate.yml
+#
+# Genera el SBOM (Software Bill of Materials) en formato SPDX
+# para todas las imágenes Docker y el código fuente.
+# Se ejecuta en cada release para generar evidencia de proveniencia.
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: 📋 SBOM Generation
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Tag de la imagen Docker a inspeccionar"
+        required: true
+        default: "latest"
+
+permissions:
+  contents: write   # Para adjuntar el SBOM al release
+  id-token: write   # Para OIDC con AWS
+  packages: read
+
+env:
+  ECR_REGISTRY: "${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com"
+
+jobs:
+  generate-sbom:
+    name: Generate SBOM (SPDX)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Install Syft (SBOM generator)
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Generate SBOM for Docker image
+        uses: anchore/sbom-action@v0
+        with:
+          image: "${{ env.ECR_REGISTRY }}/brainmart/patient-service:${{ github.event.inputs.image_tag || github.event.release.tag_name }}"
+          format: spdx-json
+          output-file: sbom-patient-service-${{ github.event.release.tag_name || 'latest' }}.spdx.json
+          upload-artifact: true
+          artifact-name: sbom-patient-service
+
+      - name: Generate SBOM for source code (.NET)
+        uses: anchore/sbom-action@v0
+        with:
+          path: microservices/patient-service/src
+          format: spdx-json
+          output-file: sbom-source-dotnet.spdx.json
+          upload-artifact: true
+
+      - name: Generate SBOM for source code (Angular)
+        uses: anchore/sbom-action@v0
+        with:
+          path: frontend/patient-dashboard
+          format: spdx-json
+          output-file: sbom-source-angular.spdx.json
+          upload-artifact: true
+
+      - name: Attach SBOMs to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            sbom-patient-service-*.spdx.json
+            sbom-source-dotnet.spdx.json
+            sbom-source-angular.spdx.json
+
+      - name: Summary
+        run: |
+          echo "## 📋 SBOM Generados" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Componente | Formato | Estado |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Patient Service (Docker) | SPDX-JSON | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Patient Service (Source .NET) | SPDX-JSON | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Patient Dashboard (Angular) | SPDX-JSON | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Los SBOMs permiten rastrear todas las dependencias en caso de CVE (ej: Log4Shell)." >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,41 @@
+# Archivos que Docker debe ignorar al construir la imagen
+# Reduce el tamaño del contexto y evita incluir archivos sensibles
+
+# ── Directorios de build ──
+bin/
+obj/
+out/
+publish/
+
+# ── Tests y cobertura ──
+TestResults/
+coverage/
+*.trx
+*.xml
+
+# ── Configuración local (contiene secretos de dev) ──
+appsettings.Development.json
+appsettings.Local.json
+*.user
+
+# ── Git ──
+.git/
+.gitignore
+
+# ── IDE ──
+.vs/
+.idea/
+*.suo
+*.user
+
+# ── Logs locales ──
+*.log
+logs/
+
+# ── Docker ──
+Dockerfile*
+.dockerignore
+
+# ── Documentación ──
+README.md
+docs/
