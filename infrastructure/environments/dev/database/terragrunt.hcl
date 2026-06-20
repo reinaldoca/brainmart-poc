@@ -42,7 +42,7 @@ dependency "network" {
     private_subnet_ids  = ["subnet-00000000000000003", "subnet-00000000000000004"]
     vpc_cidr_block      = "10.10.0.0/16"
   }
-  mock_outputs_allowed_terraform_commands = ["validate", "plan"]
+  mock_outputs_allowed_terraform_commands = ["validate", "plan", "init"]
 }
 
 inputs = {

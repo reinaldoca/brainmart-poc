@@ -1,13 +1,13 @@
 # environments/staging/terragrunt.hcl
-# ONLY locals - no include block (child modules include the root directly).
+#
+# This directory is NOT a deployable unit - it contains only environment
+# configuration (account.hcl, region.hcl) consumed by child units.
+#
+# The "exclude" block (Terragrunt v1.0+) prevents this directory from
+# being discovered and executed by "run-all" commands.
+# Deployable units are the subdirectories: network/, database/, compute/, storage/
 
-locals {
-  account_vars = read_terragrunt_config(find_in_parent_folders("account.hcl"))
-  region_vars  = read_terragrunt_config(find_in_parent_folders("region.hcl"))
-
-  environment = "staging"
-  aws_region  = local.region_vars.locals.aws_region
-  account_id  = local.account_vars.locals.account_id
+exclude {
+  if      = true
+  actions = ["all"]
 }
-# This file provides locals only - it is not a deployable unit.
-skip = true

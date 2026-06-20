@@ -182,13 +182,17 @@ resource "aws_wafv2_web_acl" "cloudfront" {
   description = "WAF para CloudFront de Brainmart. Protege contra XSS, SQLi y ataques conocidos."
   scope       = "CLOUDFRONT"
 
-  default_action { allow {} }
+  default_action {
+    allow {}
+  }
 
   # Regla 1: AWS Managed Rules - Ruleset ba?sico
   rule {
     name     = "AWSManagedRulesCommonRuleSet"
     priority = 1
-    override_action { none {} }
+    override_action {
+      none {}
+    }
     statement {
       managed_rule_group_statement {
         name        = "AWSManagedRulesCommonRuleSet"
@@ -210,7 +214,9 @@ resource "aws_wafv2_web_acl" "cloudfront" {
   rule {
     name     = "AWSManagedRulesSQLiRuleSet"
     priority = 2
-    override_action { none {} }
+    override_action {
+      none {}
+    }
     statement {
       managed_rule_group_statement {
         name        = "AWSManagedRulesSQLiRuleSet"
@@ -228,7 +234,9 @@ resource "aws_wafv2_web_acl" "cloudfront" {
   rule {
     name     = "AWSManagedRulesKnownBadInputsRuleSet"
     priority = 3
-    override_action { none {} }
+    override_action {
+      none {}
+    }
     statement {
       managed_rule_group_statement {
         name        = "AWSManagedRulesKnownBadInputsRuleSet"
@@ -246,7 +254,9 @@ resource "aws_wafv2_web_acl" "cloudfront" {
   rule {
     name     = "RateLimitRule"
     priority = 4
-    action { block {} }
+    action {
+      block {}
+    }
     statement {
       rate_based_statement {
         limit              = 2000
@@ -264,7 +274,9 @@ resource "aws_wafv2_web_acl" "cloudfront" {
   rule {
     name     = "GeoRestriction"
     priority = 5
-    action { block {} }
+    action {
+      block {}
+    }
     statement {
       not_statement {
         statement {

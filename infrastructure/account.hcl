@@ -30,7 +30,7 @@ locals {
 
     # Ambiente de desarrollo: para feature development
     dev = {
-      account_id   = "768571909258"
+      account_id   = "222222222222"
       account_name = "dev"
       description  = "Ambiente de desarrollo para el equipo de Brainmart"
     }

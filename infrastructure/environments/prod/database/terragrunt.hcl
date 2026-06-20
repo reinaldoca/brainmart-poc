@@ -24,7 +24,7 @@ dependency "network" {
     db_subnet_group_name  = "brainmart-prod-db-subnet-group"
     vpc_cidr_block        = "10.30.0.0/16"
   }
-  mock_outputs_allowed_terraform_commands = ["validate", "plan"]
+  mock_outputs_allowed_terraform_commands = ["validate", "plan", "init"]
 }
 
 inputs = {

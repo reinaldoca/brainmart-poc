@@ -1,28 +1,13 @@
 # environments/dev/terragrunt.hcl
 #
-# PURPOSE: Environment-level locals for DEV.
-# This file defines ONLY locals - it does NOT include the root config.
-# Child modules (network/, database/, etc.) include the root directly
-# via find_in_parent_folders("root.hcl") which traverses up to infrastructure/terragrunt.hcl.
+# This directory is NOT a deployable unit - it contains only environment
+# configuration (account.hcl, region.hcl) consumed by child units.
 #
-# TERRAGRUNT INCLUDE CHAIN (single level, as required):
-#   environments/dev/network/terragrunt.hcl
-#     -> includes infrastructure/terragrunt.hcl  (root, via find_in_parent_folders("root.hcl"))
-#
-# ANTI-PATTERN AVOIDED: If this file also included the root, child modules would
-# trigger a double-include error ("only one level of includes is allowed").
+# The "exclude" block (Terragrunt v1.0+) prevents this directory from
+# being discovered and executed by "run-all" commands.
+# Deployable units are the subdirectories: network/, database/, compute/, storage/
 
-locals {
-  # Read the environment-specific account.hcl (environments/dev/account.hcl)
-  # That file has: locals { account_id = "...", account_name = "dev" }
-  account_vars = read_terragrunt_config(find_in_parent_folders("account.hcl"))
-  region_vars  = read_terragrunt_config(find_in_parent_folders("region.hcl"))
-
-  environment = "dev"
-  aws_region  = local.region_vars.locals.aws_region
-
-  # The local account.hcl has account_id directly (not nested under "accounts")
-  account_id  = local.account_vars.locals.account_id
+exclude {
+  if      = true
+  actions = ["all"]
 }
-# This file provides locals only - it is not a deployable unit.
-skip = true
