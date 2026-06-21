@@ -65,8 +65,28 @@ resource "aws_s3_bucket_public_access_block" "spa" {
   restrict_public_buckets = true
 }
 
+# CKV2_AWS_61: S3 lifecycle configuration for SPA bucket
+# Cleans up incomplete multipart uploads and old noncurrent versions
+resource "aws_s3_bucket_lifecycle_configuration" "spa" {
+  bucket = aws_s3_bucket.spa.id
+  rule {
+    id     = "spa-maintenance"
+    status = "Enabled"
+
+    # CKV_AWS_300: Abort incomplete multipart uploads
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+
+    # Expire old noncurrent versions of SPA assets after 90 days
+    noncurrent_version_expiration {
+      noncurrent_days = 90
+    }
+  }
+}
+
 # ??????????????????????????????????????????????????????????????????????????????
-# S3 BUCKET ? Datos de Auditori?a (audit_log exportado en Parquet)
+# S3 BUCKET - Audit logs (audit_log exported to Parquet)
 # Object Lock COMPLIANCE mode: ni el root puede borrar antes de 7 an?os
 # ??????????????????????????????????????????????????????????????????????????????
 
@@ -122,6 +142,12 @@ resource "aws_s3_bucket_lifecycle_configuration" "audit" {
   rule {
     id     = "audit-log-archival"
     status = "Enabled"
+
+    # CKV_AWS_300: Abort failed multipart uploads after 7 days
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+
     transition {
       days          = 365
       storage_class = "GLACIER"
@@ -376,7 +402,15 @@ resource "aws_cloudfront_distribution" "spa" {
 
   restrictions {
     geo_restriction {
-      restriction_type = "none"  # La geo-restriction la hace WAF (ma?s granular)
+      # CKV_AWS_374: Native CloudFront geo restriction as defense-in-depth.
+      # WAF rule "GeoRestriction" provides the primary enforcement.
+      # This whitelist adds a second enforcement layer at the CDN level.
+      restriction_type = "whitelist"
+      locations = [
+        "US", "MX", "AR", "CO", "CL", "PE", "BR", "VE",
+        "EC", "BO", "PY", "UY", "CR", "PA", "GT", "SV",
+        "HN", "NI", "DO", "CU", "PR", "ES"
+      ]
     }
   }
 

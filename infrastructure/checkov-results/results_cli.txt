@@ -1,6 +1,6 @@
 terraform scan results:
 
-Passed checks: 156, Failed checks: 1, Skipped checks: 0, Parsing errors: 3
+Passed checks: 205, Failed checks: 0, Skipped checks: 0, Parsing errors: 5
 
 Check: CKV_AWS_65: "Ensure container insights are enabled on ECS cluster"
 	PASSED for resource: aws_ecs_cluster.main
@@ -389,7 +389,100 @@ Check: CKV_AWS_355: "Ensure no IAM policies documents allow "*" as a statement's
 Check: CKV_AWS_290: "Ensure IAM policies does not allow write access without constraints"
 	PASSED for resource: aws_iam_role_policy.vpc_flow_logs[0]
 	File: \modules\network\main.tf:556-579
+Check: CKV_AWS_93: "Ensure S3 bucket policy does not lockout all but root user. (Prevent lockouts needing root account fixes)"
+	PASSED for resource: aws_s3_bucket.spa
+	File: \modules\storage\main.tf:39-42
+Check: CKV_AWS_53: "Ensure S3 bucket has block public ACLS enabled"
+	PASSED for resource: aws_s3_bucket_public_access_block.spa
+	File: \modules\storage\main.tf:60-66
+Check: CKV_AWS_54: "Ensure S3 bucket has block public policy enabled"
+	PASSED for resource: aws_s3_bucket_public_access_block.spa
+	File: \modules\storage\main.tf:60-66
+Check: CKV_AWS_55: "Ensure S3 bucket has ignore public ACLs enabled"
+	PASSED for resource: aws_s3_bucket_public_access_block.spa
+	File: \modules\storage\main.tf:60-66
+Check: CKV_AWS_56: "Ensure S3 bucket has 'restrict_public_buckets' enabled"
+	PASSED for resource: aws_s3_bucket_public_access_block.spa
+	File: \modules\storage\main.tf:60-66
+Check: CKV_AWS_300: "Ensure S3 lifecycle configuration sets period for aborting failed uploads"
+	PASSED for resource: aws_s3_bucket_lifecycle_configuration.spa
+	File: \modules\storage\main.tf:70-86
+Check: CKV_AWS_93: "Ensure S3 bucket policy does not lockout all but root user. (Prevent lockouts needing root account fixes)"
+	PASSED for resource: aws_s3_bucket.audit
+	File: \modules\storage\main.tf:93-102
+Check: CKV_AWS_53: "Ensure S3 bucket has block public ACLS enabled"
+	PASSED for resource: aws_s3_bucket_public_access_block.audit
+	File: \modules\storage\main.tf:131-137
+Check: CKV_AWS_54: "Ensure S3 bucket has block public policy enabled"
+	PASSED for resource: aws_s3_bucket_public_access_block.audit
+	File: \modules\storage\main.tf:131-137
+Check: CKV_AWS_55: "Ensure S3 bucket has ignore public ACLs enabled"
+	PASSED for resource: aws_s3_bucket_public_access_block.audit
+	File: \modules\storage\main.tf:131-137
+Check: CKV_AWS_56: "Ensure S3 bucket has 'restrict_public_buckets' enabled"
+	PASSED for resource: aws_s3_bucket_public_access_block.audit
+	File: \modules\storage\main.tf:131-137
+Check: CKV_AWS_300: "Ensure S3 lifecycle configuration sets period for aborting failed uploads"
+	PASSED for resource: aws_s3_bucket_lifecycle_configuration.audit
+	File: \modules\storage\main.tf:140-160
+Check: CKV_AWS_70: "Ensure S3 bucket does not allow an action with any Principal"
+	PASSED for resource: aws_s3_bucket_policy.audit
+	File: \modules\storage\main.tf:163-198
+Check: CKV_AWS_93: "Ensure S3 bucket policy does not lockout all but root user. (Prevent lockouts needing root account fixes)"
+	PASSED for resource: aws_s3_bucket_policy.audit
+	File: \modules\storage\main.tf:163-198
+Check: CKV_AWS_192: "Ensure WAF prevents message lookup in Log4j2. See CVE-2021-44228 aka log4jshell"
+	PASSED for resource: aws_wafv2_web_acl.cloudfront
+	File: \modules\storage\main.tf:205-333
+Check: CKV_AWS_175: "Ensure WAF has associated rules"
+	PASSED for resource: aws_wafv2_web_acl.cloudfront
+	File: \modules\storage\main.tf:205-333
+Check: CKV_AWS_342: "Ensure WAF rule has any actions"
+	PASSED for resource: aws_wafv2_web_acl.cloudfront
+	File: \modules\storage\main.tf:205-333
+Check: CKV_AWS_305: "Ensure CloudFront distribution has a default root object configured"
+	PASSED for resource: aws_cloudfront_distribution.spa
+	File: \modules\storage\main.tf:349-431
+Check: CKV_AWS_216: "Ensure CloudFront distribution is enabled"
+	PASSED for resource: aws_cloudfront_distribution.spa
+	File: \modules\storage\main.tf:349-431
+Check: CKV_AWS_34: "Ensure CloudFront distribution ViewerProtocolPolicy is set to HTTPS"
+	PASSED for resource: aws_cloudfront_distribution.spa
+	File: \modules\storage\main.tf:349-431
+Check: CKV_AWS_86: "Ensure CloudFront distribution has Access Logging enabled"
+	PASSED for resource: aws_cloudfront_distribution.spa
+	File: \modules\storage\main.tf:349-431
+Check: CKV_AWS_374: "Ensure AWS CloudFront web distribution has geo restriction enabled"
+	PASSED for resource: aws_cloudfront_distribution.spa
+	File: \modules\storage\main.tf:349-431
+Check: CKV_AWS_174: "Verify CloudFront Distribution Viewer Certificate is using TLS v1.2 or higher"
+	PASSED for resource: aws_cloudfront_distribution.spa
+	File: \modules\storage\main.tf:349-431
+Check: CKV_AWS_68: "CloudFront Distribution should have WAF enabled"
+	PASSED for resource: aws_cloudfront_distribution.spa
+	File: \modules\storage\main.tf:349-431
+Check: CKV_AWS_259: "Ensure CloudFront response header policy enforces Strict Transport Security"
+	PASSED for resource: aws_cloudfront_response_headers_policy.security
+	File: \modules\storage\main.tf:434-483
+Check: CKV_AWS_70: "Ensure S3 bucket does not allow an action with any Principal"
+	PASSED for resource: aws_s3_bucket_policy.spa
+	File: \modules\storage\main.tf:486-517
+Check: CKV_AWS_93: "Ensure S3 bucket policy does not lockout all but root user. (Prevent lockouts needing root account fixes)"
+	PASSED for resource: aws_s3_bucket_policy.spa
+	File: \modules\storage\main.tf:486-517
+Check: CKV_AWS_77: "Ensure Athena Database is encrypted at rest (default is unencrypted)"
+	PASSED for resource: aws_athena_database.audit
+	File: \modules\storage\main.tf:523-531
+Check: CKV_AWS_82: "Ensure Athena Workgroup should enforce configuration to prevent client disabling encryption"
+	PASSED for resource: aws_athena_workgroup.audit
+	File: \modules\storage\main.tf:533-556
+Check: CKV_AWS_159: "Ensure that Athena Workgroup is encrypted"
+	PASSED for resource: aws_athena_workgroup.audit
+	File: \modules\storage\main.tf:533-556
 Check: CKV2_AWS_20: "Ensure that ALB redirects HTTP requests into HTTPS ones"
+	PASSED for resource: aws_lb.main
+	File: \modules\compute\main.tf:405-425
+Check: CKV2_AWS_28: "Ensure public facing ALB are protected by WAF"
 	PASSED for resource: aws_lb.main
 	File: \modules\compute\main.tf:405-425
 Check: CKV2_AWS_35: "AWS NAT Gateways should be utilized for the default route"
@@ -401,15 +494,21 @@ Check: CKV2_AWS_35: "AWS NAT Gateways should be utilized for the default route"
 Check: CKV2_AWS_35: "AWS NAT Gateways should be utilized for the default route"
 	PASSED for resource: aws_route_table.isolated
 	File: \modules\network\main.tf:239-247
+Check: CKV2_AWS_42: "Ensure AWS CloudFront distribution uses custom SSL certificate"
+	PASSED for resource: aws_cloudfront_distribution.spa
+	File: \modules\storage\main.tf:349-431
+Check: CKV2_AWS_32: "Ensure CloudFront distribution has a response headers policy attached"
+	PASSED for resource: aws_cloudfront_distribution.spa
+	File: \modules\storage\main.tf:349-431
+Check: CKV2_AWS_72: "Ensure AWS CloudFront origin protocol policy enforces HTTPS-only"
+	PASSED for resource: aws_cloudfront_distribution.spa
+	File: \modules\storage\main.tf:349-431
 Check: CKV_AWS_103: "Ensure that load balancer is using at least TLS 1.2"
 	PASSED for resource: aws_lb_listener.https
 	File: \modules\compute\main.tf:434-445
 Check: CKV_AWS_103: "Ensure that load balancer is using at least TLS 1.2"
 	PASSED for resource: aws_lb_listener.http_redirect
 	File: \modules\compute\main.tf:448-461
-Check: CKV2_AWS_28: "Ensure public facing ALB are protected by WAF"
-	PASSED for resource: aws_lb.main
-	File: \modules\compute\main.tf:405-425
 Check: CKV2_AWS_56: "Ensure AWS Managed IAMFullAccess IAM policy is not used."
 	PASSED for resource: aws_iam_role_policy_attachment.task_execution_basic
 	File: \modules\compute\main.tf:104-107
@@ -425,9 +524,9 @@ Check: CKV2_AWS_74: "Ensure AWS Load Balancers use strong ciphers"
 Check: CKV2_AWS_74: "Ensure AWS Load Balancers use strong ciphers"
 	PASSED for resource: aws_lb_listener.http_redirect
 	File: \modules\compute\main.tf:448-461
-Check: CKV2_AWS_19: "Ensure that all EIP addresses allocated to a VPC are attached to EC2 instances"
-	PASSED for resource: aws_eip.nat[0]
-	File: \modules\network\main.tf:156-167
+Check: CKV2_AWS_54: "Ensure AWS CloudFront distribution is using secure SSL protocols for HTTPS communication"
+	PASSED for resource: aws_cloudfront_distribution.spa
+	File: \modules\storage\main.tf:349-431
 Check: CKV2_AWS_40: "Ensure AWS IAM policy does not allow full IAM privileges"
 	PASSED for resource: aws_iam_role_policy.task_execution_secrets
 	File: \modules\compute\main.tf:111-140
@@ -440,12 +539,21 @@ Check: CKV2_AWS_40: "Ensure AWS IAM policy does not allow full IAM privileges"
 Check: CKV2_AWS_40: "Ensure AWS IAM policy does not allow full IAM privileges"
 	PASSED for resource: aws_iam_role_policy.vpc_flow_logs[0]
 	File: \modules\network\main.tf:556-579
-Check: CKV2_AWS_64: "Ensure KMS key Policy is defined"
-	PASSED for resource: aws_kms_key.rds
-	File: \modules\database\main.tf:60-110
+Check: CKV2_AWS_46: "Ensure AWS CloudFront Distribution with S3 have Origin Access set to enabled"
+	PASSED for resource: aws_cloudfront_distribution.spa
+	File: \modules\storage\main.tf:349-431
 Check: CKV2_AWS_69: "Ensure AWS RDS database instance configured with encryption in transit"
 	PASSED for resource: aws_db_instance.main
 	File: \modules\database\main.tf:311-415
+Check: CKV_AWS_378: "Ensure AWS Load Balancer doesn't use HTTP protocol"
+	PASSED for resource: aws_lb_target_group.app
+	File: \modules\compute\main.tf:463-484
+Check: CKV2_AWS_19: "Ensure that all EIP addresses allocated to a VPC are attached to EC2 instances"
+	PASSED for resource: aws_eip.nat[0]
+	File: \modules\network\main.tf:156-167
+Check: CKV2_AWS_64: "Ensure KMS key Policy is defined"
+	PASSED for resource: aws_kms_key.rds
+	File: \modules\database\main.tf:60-110
 Check: CKV2_AWS_30: "Ensure Postgres RDS as aws_db_instance has Query Logging enabled"
 	PASSED for resource: aws_db_instance.main
 	File: \modules\database\main.tf:311-415
@@ -455,9 +563,6 @@ Check: CKV2_AWS_57: "Ensure Secrets Manager secrets should have automatic rotati
 Check: CKV2_AWS_11: "Ensure VPC flow logging is enabled in all VPCs"
 	PASSED for resource: aws_vpc.main
 	File: \modules\network\main.tf:49-59
-Check: CKV_AWS_378: "Ensure AWS Load Balancer doesn't use HTTP protocol"
-	PASSED for resource: aws_lb_target_group.app
-	File: \modules\compute\main.tf:463-484
 Check: CKV2_AWS_44: "Ensure AWS route table with VPC peering does not contain routes overly permissive to all traffic"
 	PASSED for resource: aws_route_table.public
 	File: \modules\network\main.tf:191-202
@@ -467,12 +572,53 @@ Check: CKV2_AWS_44: "Ensure AWS route table with VPC peering does not contain ro
 Check: CKV2_AWS_44: "Ensure AWS route table with VPC peering does not contain routes overly permissive to all traffic"
 	PASSED for resource: aws_route_table.isolated
 	File: \modules\network\main.tf:239-247
+Check: CKV2_AWS_61: "Ensure that an S3 bucket has a lifecycle configuration"
+	PASSED for resource: aws_s3_bucket.spa
+	File: \modules\storage\main.tf:39-42
+Check: CKV2_AWS_61: "Ensure that an S3 bucket has a lifecycle configuration"
+	PASSED for resource: aws_s3_bucket.audit
+	File: \modules\storage\main.tf:93-102
+Check: CKV_AWS_57: "S3 Bucket has an ACL defined which allows public WRITE access."
+	PASSED for resource: aws_s3_bucket.spa
+	File: \modules\storage\main.tf:39-42
+Check: CKV_AWS_57: "S3 Bucket has an ACL defined which allows public WRITE access."
+	PASSED for resource: aws_s3_bucket.audit
+	File: \modules\storage\main.tf:93-102
+Check: CKV_AWS_20: "S3 Bucket has an ACL defined which allows public READ access."
+	PASSED for resource: aws_s3_bucket.spa
+	File: \modules\storage\main.tf:39-42
+Check: CKV_AWS_20: "S3 Bucket has an ACL defined which allows public READ access."
+	PASSED for resource: aws_s3_bucket.audit
+	File: \modules\storage\main.tf:93-102
+Check: CKV_AWS_19: "Ensure all data stored in the S3 bucket is securely encrypted at rest"
+	PASSED for resource: aws_s3_bucket.spa
+	File: \modules\storage\main.tf:39-42
+Check: CKV_AWS_19: "Ensure all data stored in the S3 bucket is securely encrypted at rest"
+	PASSED for resource: aws_s3_bucket.audit
+	File: \modules\storage\main.tf:93-102
+Check: CKV_AWS_145: "Ensure that S3 buckets are encrypted with KMS by default"
+	PASSED for resource: aws_s3_bucket.spa
+	File: \modules\storage\main.tf:39-42
+Check: CKV_AWS_145: "Ensure that S3 buckets are encrypted with KMS by default"
+	PASSED for resource: aws_s3_bucket.audit
+	File: \modules\storage\main.tf:93-102
+Check: CKV2_AWS_6: "Ensure that S3 bucket has a Public Access block"
+	PASSED for resource: aws_s3_bucket.spa
+	File: \modules\storage\main.tf:39-42
+Check: CKV2_AWS_6: "Ensure that S3 bucket has a Public Access block"
+	PASSED for resource: aws_s3_bucket.audit
+	File: \modules\storage\main.tf:93-102
+Check: CKV_AWS_21: "Ensure all data stored in the S3 bucket have versioning enabled"
+	PASSED for resource: aws_s3_bucket.spa
+	File: \modules\storage\main.tf:39-42
+Check: CKV_AWS_21: "Ensure all data stored in the S3 bucket have versioning enabled"
+	PASSED for resource: aws_s3_bucket.audit
+	File: \modules\storage\main.tf:93-102
 Check: CKV2_AWS_12: "Ensure the default security group of every VPC restricts all traffic"
 	PASSED for resource: aws_vpc.main
 	File: \modules\network\main.tf:49-59
-Check: CKV2_AWS_60: "Ensure RDS instance with copy tags to snapshots is enabled"
-	FAILED for resource: aws_db_instance.main
-	File: \modules\database\main.tf:311-415
+Error parsing file C:\Users\usuario\Desktop\repositorios\poc\brainmart-poc\infrastructure\environments\dev\terragrunt.hcl
+Error parsing file C:\Users\usuario\Desktop\repositorios\poc\brainmart-poc\infrastructure\environments\prod\terragrunt.hcl
+Error parsing file C:\Users\usuario\Desktop\repositorios\poc\brainmart-poc\infrastructure\environments\staging\terragrunt.hcl
 Error parsing file C:\Users\usuario\Desktop\repositorios\poc\brainmart-poc\infrastructure\modules\secrets\main.tf
 Error parsing file C:\Users\usuario\Desktop\repositorios\poc\brainmart-poc\infrastructure\modules\secrets\variables.tf
-Error parsing file C:\Users\usuario\Desktop\repositorios\poc\brainmart-poc\infrastructure\modules\storage\main.tf
