@@ -1,0 +1,51 @@
+# ==========================================
+# Archivos locales de Terraform / Terragrunt
+# ==========================================
+
+# Ignorar la carpeta de inicialización (.terraform)
+# Contiene los binarios de los proveedores y módulos descargados
+.terraform/
+.terragrunt-cache/
+
+# Ignorar archivos de estado local de Terraform
+*.tfstate
+*.tfstate.*
+
+# Ignorar archivos de variables con credenciales o datos sensibles
+# (NUNCA subas estos archivos a GitHub)
+*.tfvars
+*.tfvars.json
+*.tfvars
+*.tfvars.json
+
+# Ignorar archivos de variables generados por Terragrunt de forma dinámica
+terragrunt_generated_*.tf
+
+# ==========================================
+# Respaldos y Archivos Temporales
+# ==========================================
+
+# Archivos de bloqueo de caídas o respaldos automáticos
+*.backup
+*.lock.hcl
+
+# Archivos de planes de ejecución exportados 
+# (Pueden contener secretos en texto plano si los guardas en disco)
+*.tfplan
+*.tfplan.binary
+
+# ==========================================
+# Logs y Depuración
+# ==========================================
+
+# Archivos de registro de errores o trazas de ejecución
+*.log
+crash.log
+
+# ==========================================
+# Excepciones (OPCIONAL)
+# ==========================================
+
+# SI deseas guardar el archivo de bloqueo de versiones de proveedores en Git, 
+# descomenta las siguientes líneas (borra el '#'):
+# !.terraform.lock.hcl
