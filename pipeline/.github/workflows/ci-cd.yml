@@ -46,7 +46,7 @@ env:
   TERRAFORM_VERSION: "1.7.5"
   TERRAGRUNT_VERSION: "0.55.18"
   DOTNET_VERSION: "8.0.x"
-  NODE_VERSION: "20.x"
+  NODE_VERSION: "22.x"
 
   # ?????? Nombres de recursos AWS ??????
   ECR_REGISTRY: "${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com"
