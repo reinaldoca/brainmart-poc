@@ -50,18 +50,17 @@ builder.Services.AddNpgsqlDataSource(
     builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found."));
 
-// ── KMS Encryption Service para campos PHI ──
+// -- KMS Encryption Service for PHI fields --
 builder.Services.AddSingleton<IEncryptionService, KmsEncryptionService>();
 builder.Services.AddAWSService<IAmazonKeyManagementService>();
 
-// ── Patient Repository: Npgsql directo para compatibilidad con triggers ALCOA+ ──
+// -- Patient Repository: raw Npgsql for ALCOA+ trigger compatibility --
 builder.Services.AddScoped<IPatientRepository, NpgsqlPatientRepository>();
 
-// ── Audit Service: inyecta contexto ALCOA+ en cada request ──
+// -- Audit Context Service --
 builder.Services.AddScoped<IAuditContextService, AuditContextService>();
 
-// ── AWS X-Ray para trazas distribuidas ──
-builder.Services.AddAWSService<Amazon.XRay.AmazonXRayConfig>();
+// -- X-Ray: no DI registration needed; initialized via app.UseXRay() middleware --
 
 // ── JWT Authentication con HttpOnly Cookies ──
 // SEGURIDAD: JWT en HttpOnly Cookie (no localStorage) previene XSS

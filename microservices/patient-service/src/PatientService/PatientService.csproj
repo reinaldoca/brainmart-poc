@@ -28,6 +28,8 @@
 
     <!-- AWS SDK: KMS for PHI field-level encryption -->
     <PackageReference Include="AWSSDK.KeyManagementService" Version="3.7.402.3" />
+    <!-- AWS SDK DI integration (provides AddAWSService<T> extension) -->
+    <PackageReference Include="AWSSDK.Extensions.NETCore.Setup" Version="3.7.7" />
 
     <!-- AWS X-Ray for distributed tracing -->
     <!-- AWSXRayRecorder.Core latest: 2.16.0  -->

@@ -212,21 +212,18 @@ public class PatientsController : ControllerBase
 
     private async Task<PatientDto> DecryptPatientFieldsAsync(Patient patient)
     {
-        return new PatientDto
-        {
-            Id          = patient.Id,
-            FirstName   = await _encryption.DecryptAsync(patient.FirstNameEncrypted),
-            LastName    = await _encryption.DecryptAsync(patient.LastNameEncrypted),
-            DocumentId  = await _encryption.DecryptAsync(patient.DocumentIdEncrypted),
-            Email       = await _encryption.DecryptAsync(patient.EmailEncrypted),
-            Address     = patient.AddressEncrypted is not null
-                ? await _encryption.DecryptAsync(patient.AddressEncrypted)
-                : null,
-            TrialId     = patient.TrialId,
-            ConsentDate = patient.ConsentDate,
-            Status      = patient.Status,
-            CreatedAt   = patient.CreatedAt,
-            CreatedBy   = patient.CreatedBy
-        };
+        // PatientDto is a positional record - use constructor syntax, not object initializer
+        var firstName   = await _encryption.DecryptAsync(patient.FirstNameEncrypted);
+        var lastName    = await _encryption.DecryptAsync(patient.LastNameEncrypted);
+        var documentId  = await _encryption.DecryptAsync(patient.DocumentIdEncrypted);
+        var email       = await _encryption.DecryptAsync(patient.EmailEncrypted);
+        var address     = patient.AddressEncrypted is not null
+            ? await _encryption.DecryptAsync(patient.AddressEncrypted)
+            : null;
+
+        return new PatientDto(
+            patient.Id, firstName, lastName, documentId, email, address,
+            patient.TrialId, patient.ConsentDate, patient.Status,
+            patient.CreatedAt, patient.CreatedBy);
     }
 }
