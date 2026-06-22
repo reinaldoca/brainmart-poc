@@ -53,7 +53,7 @@ env:
   IMAGE_NAME: "brainmart/patient-service"
 
   # ?????? Configuraci??n del pipeline ??????
-  CHECKOV_VERSION: "3.2.0"
+  CHECKOV_VERSION: "3.3.0"
 
 jobs:
 
@@ -76,10 +76,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
+          cache-dependency-path: requirements.txt
 
       - name: ???? Instalar Checkov
         run: |
-          pip install checkov==${{ env.CHECKOV_VERSION }}
+          pip install -r ${{ github.workspace }}/requirements.txt
           checkov --version
 
       - name: ???? Ejecutar Checkov con custom policies

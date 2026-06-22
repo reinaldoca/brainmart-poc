@@ -203,44 +203,44 @@
 		<testcase name="[NONE][CKV_AWS_82] Ensure Athena Workgroup should enforce configuration to prevent client disabling encryption" classname="\modules\storage\main.tf.aws_athena_workgroup.audit" file="\modules\storage\main.tf"/>
 		<testcase name="[NONE][CKV_AWS_159] Ensure that Athena Workgroup is encrypted" classname="\modules\storage\main.tf.aws_athena_workgroup.audit" file="\modules\storage\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_20] Ensure that ALB redirects HTTP requests into HTTPS ones" classname="\modules\compute\main.tf.aws_lb.main" file="\modules\compute\main.tf"/>
-		<testcase name="[NONE][CKV2_AWS_28] Ensure public facing ALB are protected by WAF" classname="\modules\compute\main.tf.aws_lb.main" file="\modules\compute\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_35] AWS NAT Gateways should be utilized for the default route" classname="\modules\network\main.tf.aws_route_table.public" file="\modules\network\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_35] AWS NAT Gateways should be utilized for the default route" classname="\modules\network\main.tf.aws_route_table.private[0]" file="\modules\network\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_35] AWS NAT Gateways should be utilized for the default route" classname="\modules\network\main.tf.aws_route_table.isolated" file="\modules\network\main.tf"/>
+		<testcase name="[NONE][CKV_AWS_103] Ensure that load balancer is using at least TLS 1.2" classname="\modules\compute\main.tf.aws_lb_listener.https" file="\modules\compute\main.tf"/>
+		<testcase name="[NONE][CKV_AWS_103] Ensure that load balancer is using at least TLS 1.2" classname="\modules\compute\main.tf.aws_lb_listener.http_redirect" file="\modules\compute\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_42] Ensure AWS CloudFront distribution uses custom SSL certificate" classname="\modules\storage\main.tf.aws_cloudfront_distribution.spa" file="\modules\storage\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_32] Ensure CloudFront distribution has a response headers policy attached" classname="\modules\storage\main.tf.aws_cloudfront_distribution.spa" file="\modules\storage\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_72] Ensure AWS CloudFront origin protocol policy enforces HTTPS-only" classname="\modules\storage\main.tf.aws_cloudfront_distribution.spa" file="\modules\storage\main.tf"/>
+		<testcase name="[NONE][CKV2_AWS_28] Ensure public facing ALB are protected by WAF" classname="\modules\compute\main.tf.aws_lb.main" file="\modules\compute\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_54] Ensure AWS CloudFront distribution is using secure SSL protocols for HTTPS communication" classname="\modules\storage\main.tf.aws_cloudfront_distribution.spa" file="\modules\storage\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_46] Ensure AWS CloudFront Distribution with S3 have Origin Access set to enabled" classname="\modules\storage\main.tf.aws_cloudfront_distribution.spa" file="\modules\storage\main.tf"/>
-		<testcase name="[NONE][CKV_AWS_103] Ensure that load balancer is using at least TLS 1.2" classname="\modules\compute\main.tf.aws_lb_listener.https" file="\modules\compute\main.tf"/>
-		<testcase name="[NONE][CKV_AWS_103] Ensure that load balancer is using at least TLS 1.2" classname="\modules\compute\main.tf.aws_lb_listener.http_redirect" file="\modules\compute\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_56] Ensure AWS Managed IAMFullAccess IAM policy is not used." classname="\modules\compute\main.tf.aws_iam_role_policy_attachment.task_execution_basic" file="\modules\compute\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_56] Ensure AWS Managed IAMFullAccess IAM policy is not used." classname="\modules\database\main.tf.aws_iam_role_policy_attachment.rds_monitoring" file="\modules\database\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_75] Ensure no open CORS policy" classname="\modules\database\main.tf.aws_lambda_function.audit_export[0]" file="\modules\database\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_74] Ensure AWS Load Balancers use strong ciphers" classname="\modules\compute\main.tf.aws_lb_listener.https" file="\modules\compute\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_74] Ensure AWS Load Balancers use strong ciphers" classname="\modules\compute\main.tf.aws_lb_listener.http_redirect" file="\modules\compute\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_64] Ensure KMS key Policy is defined" classname="\modules\database\main.tf.aws_kms_key.rds" file="\modules\database\main.tf"/>
+		<testcase name="[NONE][CKV2_AWS_19] Ensure that all EIP addresses allocated to a VPC are attached to EC2 instances" classname="\modules\network\main.tf.aws_eip.nat[0]" file="\modules\network\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_40] Ensure AWS IAM policy does not allow full IAM privileges" classname="\modules\compute\main.tf.aws_iam_role_policy.task_execution_secrets" file="\modules\compute\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_40] Ensure AWS IAM policy does not allow full IAM privileges" classname="\modules\compute\main.tf.aws_iam_role_policy.task_permissions" file="\modules\compute\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_40] Ensure AWS IAM policy does not allow full IAM privileges" classname="\modules\database\main.tf.aws_iam_role_policy.audit_export_lambda[0]" file="\modules\database\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_40] Ensure AWS IAM policy does not allow full IAM privileges" classname="\modules\network\main.tf.aws_iam_role_policy.vpc_flow_logs[0]" file="\modules\network\main.tf"/>
-		<testcase name="[NONE][CKV2_AWS_19] Ensure that all EIP addresses allocated to a VPC are attached to EC2 instances" classname="\modules\network\main.tf.aws_eip.nat[0]" file="\modules\network\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_69] Ensure AWS RDS database instance configured with encryption in transit" classname="\modules\database\main.tf.aws_db_instance.main" file="\modules\database\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_61] Ensure that an S3 bucket has a lifecycle configuration" classname="\modules\storage\main.tf.aws_s3_bucket.spa" file="\modules\storage\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_61] Ensure that an S3 bucket has a lifecycle configuration" classname="\modules\storage\main.tf.aws_s3_bucket.audit" file="\modules\storage\main.tf"/>
-		<testcase name="[NONE][CKV2_AWS_30] Ensure Postgres RDS as aws_db_instance has Query Logging enabled" classname="\modules\database\main.tf.aws_db_instance.main" file="\modules\database\main.tf"/>
-		<testcase name="[NONE][CKV_AWS_57] S3 Bucket has an ACL defined which allows public WRITE access." classname="\modules\storage\main.tf.aws_s3_bucket.spa" file="\modules\storage\main.tf"/>
-		<testcase name="[NONE][CKV_AWS_57] S3 Bucket has an ACL defined which allows public WRITE access." classname="\modules\storage\main.tf.aws_s3_bucket.audit" file="\modules\storage\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_57] Ensure Secrets Manager secrets should have automatic rotation enabled" classname="\modules\database\main.tf.aws_secretsmanager_secret.db_password" file="\modules\database\main.tf"/>
-		<testcase name="[NONE][CKV_AWS_145] Ensure that S3 buckets are encrypted with KMS by default" classname="\modules\storage\main.tf.aws_s3_bucket.spa" file="\modules\storage\main.tf"/>
-		<testcase name="[NONE][CKV_AWS_145] Ensure that S3 buckets are encrypted with KMS by default" classname="\modules\storage\main.tf.aws_s3_bucket.audit" file="\modules\storage\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_11] Ensure VPC flow logging is enabled in all VPCs" classname="\modules\network\main.tf.aws_vpc.main" file="\modules\network\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_44] Ensure AWS route table with VPC peering does not contain routes overly permissive to all traffic" classname="\modules\network\main.tf.aws_route_table.public" file="\modules\network\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_44] Ensure AWS route table with VPC peering does not contain routes overly permissive to all traffic" classname="\modules\network\main.tf.aws_route_table.private[0]" file="\modules\network\main.tf"/>
 		<testcase name="[NONE][CKV2_AWS_44] Ensure AWS route table with VPC peering does not contain routes overly permissive to all traffic" classname="\modules\network\main.tf.aws_route_table.isolated" file="\modules\network\main.tf"/>
+		<testcase name="[NONE][CKV2_AWS_30] Ensure Postgres RDS as aws_db_instance has Query Logging enabled" classname="\modules\database\main.tf.aws_db_instance.main" file="\modules\database\main.tf"/>
+		<testcase name="[NONE][CKV_AWS_57] S3 Bucket has an ACL defined which allows public WRITE access." classname="\modules\storage\main.tf.aws_s3_bucket.spa" file="\modules\storage\main.tf"/>
+		<testcase name="[NONE][CKV_AWS_57] S3 Bucket has an ACL defined which allows public WRITE access." classname="\modules\storage\main.tf.aws_s3_bucket.audit" file="\modules\storage\main.tf"/>
 		<testcase name="[NONE][CKV_AWS_20] S3 Bucket has an ACL defined which allows public READ access." classname="\modules\storage\main.tf.aws_s3_bucket.spa" file="\modules\storage\main.tf"/>
 		<testcase name="[NONE][CKV_AWS_20] S3 Bucket has an ACL defined which allows public READ access." classname="\modules\storage\main.tf.aws_s3_bucket.audit" file="\modules\storage\main.tf"/>
 		<testcase name="[NONE][CKV_AWS_378] Ensure AWS Load Balancer doesn't use HTTP protocol" classname="\modules\compute\main.tf.aws_lb_target_group.app" file="\modules\compute\main.tf"/>
+		<testcase name="[NONE][CKV_AWS_145] Ensure that S3 buckets are encrypted with KMS by default" classname="\modules\storage\main.tf.aws_s3_bucket.spa" file="\modules\storage\main.tf"/>
+		<testcase name="[NONE][CKV_AWS_145] Ensure that S3 buckets are encrypted with KMS by default" classname="\modules\storage\main.tf.aws_s3_bucket.audit" file="\modules\storage\main.tf"/>
 		<testcase name="[NONE][CKV_AWS_21] Ensure all data stored in the S3 bucket have versioning enabled" classname="\modules\storage\main.tf.aws_s3_bucket.spa" file="\modules\storage\main.tf"/>
 		<testcase name="[NONE][CKV_AWS_21] Ensure all data stored in the S3 bucket have versioning enabled" classname="\modules\storage\main.tf.aws_s3_bucket.audit" file="\modules\storage\main.tf"/>
 		<testcase name="[NONE][CKV_AWS_19] Ensure all data stored in the S3 bucket is securely encrypted at rest" classname="\modules\storage\main.tf.aws_s3_bucket.spa" file="\modules\storage\main.tf"/>

@@ -1,0 +1,10 @@
+# Python dependencies for the Brainmart IaC pipeline
+# Pinned versions for reproducibility
+
+# Checkov - IaC policy scanning (Prisma Cloud)
+# Kept in sync with CHECKOV_VERSION in ci-cd.yml
+checkov==3.3.0
+
+# Dependencies used by custom Checkov checks
+# (checkov pulls these transitively, listed here for transparency)
+pyyaml>=6.0
