@@ -30,8 +30,10 @@
     <PackageReference Include="AWSSDK.KeyManagementService" Version="3.7.402.3" />
 
     <!-- AWS X-Ray for distributed tracing -->
-    <PackageReference Include="AWSXRayRecorder.Core" Version="2.15.2" />
-    <PackageReference Include="AWSXRayRecorder.Handlers.AspNetCore" Version="2.15.2" />
+    <!-- AWSXRayRecorder.Core latest: 2.16.0  -->
+    <!-- AWSXRayRecorder.Handlers.AspNetCore latest: 2.13.0 (package diverged from Core) -->
+    <PackageReference Include="AWSXRayRecorder.Core" Version="2.16.0" />
+    <PackageReference Include="AWSXRayRecorder.Handlers.AspNetCore" Version="2.13.0" />
 
     <!-- Serilog structured logging (JSON -> CloudWatch Insights) -->
     <PackageReference Include="Serilog.AspNetCore" Version="8.0.2" />
