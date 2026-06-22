@@ -76,6 +76,14 @@ skip-check:
   #   of the attribute value. Will re-enable when fixed upstream.
   - CKV2_AWS_60
 
+  # CKV2_AWS_19: EIP not attached to EC2 instance
+  #   Justification: aws_eip.nat is attached to aws_nat_gateway.main
+  #   (modules/network/main.tf line 172: allocation_id = aws_eip.nat[count.index].id).
+  #   NAT Gateway EIPs are the standard AWS pattern for private subnet egress.
+  #   Checkov cannot resolve the cross-resource reference from aws_eip to
+  #   aws_nat_gateway in static analysis (it only checks aws_instance attachment).
+  - CKV2_AWS_19
+
   # CKV_AWS_117: Lambda inside VPC
   #   Justification: the audit_log export Lambda IS inside the VPC
   #   (configured in modules/database/main.tf). This is a false positive
