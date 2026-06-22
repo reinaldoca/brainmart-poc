@@ -10,6 +10,7 @@
 
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PatientService.Data;
 using PatientService.Models;
 using PatientService.Services;
 using System.Security.Claims;
