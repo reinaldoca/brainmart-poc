@@ -18,6 +18,7 @@ using Serilog.Formatting.Json;
 using PatientService.Services;
 using PatientService.Middleware;
 using PatientService.Data;
+using Amazon.KeyManagementService;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -51,6 +52,10 @@ builder.Services.AddNpgsqlDataSource(
 
 // ── KMS Encryption Service para campos PHI ──
 builder.Services.AddSingleton<IEncryptionService, KmsEncryptionService>();
+builder.Services.AddAWSService<IAmazonKeyManagementService>();
+
+// ── Patient Repository: Npgsql directo para compatibilidad con triggers ALCOA+ ──
+builder.Services.AddScoped<IPatientRepository, NpgsqlPatientRepository>();
 
 // ── Audit Service: inyecta contexto ALCOA+ en cada request ──
 builder.Services.AddScoped<IAuditContextService, AuditContextService>();
