@@ -1,0 +1,42 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>PatientService</RootNamespace>
+    <AssemblyName>PatientService</AssemblyName>
+    <UserSecretsId>brainmart-patient-service</UserSecretsId>
+    <!-- FDA 21 CFR Part 11: build metadata for audit trail -->
+    <InformationalVersion>1.0.0</InformationalVersion>
+    <Company>Brainmart Health</Company>
+    <Product>Patient Service</Product>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- OpenAPI / Swagger -->
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+
+    <!-- PostgreSQL via Npgsql -->
+    <PackageReference Include="Npgsql" Version="8.0.3" />
+    <PackageReference Include="Npgsql.DependencyInjection" Version="8.0.3" />
+    <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="8.0.1" />
+
+    <!-- JWT Authentication -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.8" />
+
+    <!-- AWS SDK: KMS for PHI field-level encryption -->
+    <PackageReference Include="AWSSDK.KeyManagementService" Version="3.7.402.3" />
+
+    <!-- AWS X-Ray for distributed tracing -->
+    <PackageReference Include="AWSXRayRecorder.Core" Version="2.15.2" />
+    <PackageReference Include="AWSXRayRecorder.Handlers.AspNetCore" Version="2.15.2" />
+
+    <!-- Serilog structured logging (JSON -> CloudWatch Insights) -->
+    <PackageReference Include="Serilog.AspNetCore" Version="8.0.2" />
+    <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
+    <PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.1" />
+  </ItemGroup>
+
+</Project>
