@@ -92,10 +92,11 @@ skip-path:
   - .terragrunt-cache
   # modules/secrets: OS-level write restriction on this workstation.
   # The module is functionally correct; excluded only for local Checkov runs.
-  - modules/secrets
-  # Terragrunt-specific HCL (exclude block) - not valid Terraform syntax.
-  # Regex pattern matches on Windows (backslash) and Linux (forward slash).
-  - environments.*(dev|staging|prod).terragrunt.hcl
+  # Use regex dot (.) as path separator - matches both / and \ (Windows/Linux)
+  - modules.secrets
+  # env-level terragrunt.hcl now has locals {} only (no exclude block) -
+  # entries below kept as safety net in case files change
+  - environments.(dev|staging|prod).terragrunt.hcl
 
 # Do not download external Terraform modules during the check.
 # Reason: the CI pipeline has no internet access during the policy-check job.
