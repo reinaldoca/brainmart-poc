@@ -18,9 +18,7 @@
 
 package brainmart.tags
 
-import future.keywords.in
-import future.keywords.if
-import future.keywords.every
+import rego.v1
 
 # ── Tags obligatorios para TODOS los recursos ──
 required_tags := {

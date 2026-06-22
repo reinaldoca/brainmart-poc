@@ -16,8 +16,7 @@
 
 package brainmart.security_groups
 
-import future.keywords.in
-import future.keywords.if
+import rego.v1
 
 # ── Puertos sensibles que NUNCA deben estar abiertos a internet ──
 sensitive_ports := {22, 5432, 3306, 1433, 3389}

@@ -25,9 +25,7 @@
 
 package brainmart.rds
 
-import future.keywords.in
-import future.keywords.if
-import future.keywords.every
+import rego.v1
 
 # ── REGLA PRINCIPAL: deny ──
 # OPA evalúa todas las reglas 'deny'. Si alguna produce un mensaje,

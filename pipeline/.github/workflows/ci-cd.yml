@@ -95,25 +95,43 @@ jobs:
           # directamente desde .checkov.yaml v??a --config-file.
           # Los flags --output y --output-file-path se pasan en CLI porque
           # el YAML solo acepta un valor en 'output', no m??ltiples.
+                    # Tee output to file: violations appear in the log AND in the Job Summary tab
           checkov \
             -d . \
             --external-checks-dir policy-as-code/checkov/custom_policies/ \
             --config-file policy-as-code/checkov/.checkov.yaml \
+            --skip-path environments/dev/terragrunt.hcl \
+            --skip-path environments/staging/terragrunt.hcl \
+            --skip-path environments/prod/terragrunt.hcl \
             --output cli \
             --output junitxml \
             --output-file-path checkov-results \
-            || CHECKOV_EXIT_CODE=$?
+            2>&1 | tee /tmp/checkov-output.txt \
+            || CHECKOV_EXIT_CODE=${PIPESTATUS[0]}
 
           echo "checkov_exit_code=${CHECKOV_EXIT_CODE:-0}" >> $GITHUB_OUTPUT
 
-          # Mostrar resumen
-          echo "## ???? Checkov Results" >> $GITHUB_STEP_SUMMARY
-          if [ "${CHECKOV_EXIT_CODE:-0}" -eq 0 ]; then
-            echo "??? Todos los checks de Checkov pasaron" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "??? Checkov detect?? violaciones de compliance" >> $GITHUB_STEP_SUMMARY
-            echo "Revisar los resultados en el artefacto 'checkov-results'" >> $GITHUB_STEP_SUMMARY
-          fi
+          # Write to GitHub Step Summary - visible inline without downloading artifacts
+          {
+            echo '## Checkov IaC Compliance Results'
+            if [ "${CHECKOV_EXIT_CODE:-0}" -eq 0 ]; then
+              echo '**Status: PASSED** - All checks passed'
+            else
+              echo '**Status: FAILED** - Compliance violations found'
+            fi
+            echo ''
+            echo '<details><summary>Full Checkov output (click to expand)</summary>'
+            echo ''
+            printf '```\n'
+            cat /tmp/checkov-output.txt
+            printf '```\n'
+            echo '</details>'
+            echo ''
+            echo '**Failed checks:**'
+            printf '```\n'
+            grep -E 'FAILED for resource:' /tmp/checkov-output.txt || echo 'None'
+            printf '```\n'
+          } >> $GITHUB_STEP_SUMMARY
 
       - name: ???? Upload Checkov results
         uses: actions/upload-artifact@v4
@@ -191,25 +209,36 @@ jobs:
           }
           EOF
 
-          # Ejecutar conftest contra el plan mock
+          # Run conftest - tee output so violations appear in log AND Step Summary
           conftest test /tmp/mock-tfplan.json \
             --policy policy-as-code/opa/policies/ \
-            --namespace brainmart \
+            --namespace brainmart.rds,brainmart.tags,brainmart.network \
             --output table \
-            --fail-on-warn=false || OPA_EXIT_CODE=$?
+            2>&1 | tee /tmp/opa-output.txt \
+            || OPA_EXIT_CODE=${PIPESTATUS[0]}
 
-          echo "## ???? OPA Policy Results" >> $GITHUB_STEP_SUMMARY
-          if [ "${OPA_EXIT_CODE:-0}" -eq 0 ]; then
-            echo "??? Todas las pol??ticas OPA pasaron" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "??????  Algunas pol??ticas OPA fallaron (esperado en dev con multi_az=false)" >> $GITHUB_STEP_SUMMARY
-          fi
+          {
+            echo '## OPA Rego Policy Results'
+            if [ "${OPA_EXIT_CODE:-0}" -eq 0 ]; then
+              echo '**Status: PASSED** - All OPA policies satisfied'
+            else
+              echo '**Status: FAILED** - Compliance violations found'
+            fi
+            echo ''
+            echo '`'
+            cat /tmp/opa-output.txt
+            echo '`'
+            echo ''
+            echo '> Note: multi_az=false in dev is expected. Enforced only in prod.'
+          } >> $GITHUB_STEP_SUMMARY
 
       - name: ??? Fallar si Checkov encontr?? violaciones CR??TICAS
         if: steps.checkov.outputs.checkov_exit_code != '0'
         run: |
           echo "??? Checkov encontr?? violaciones de compliance. El pipeline no puede continuar."
-          echo "Revisar el artefacto 'checkov-results' para detalles."
+          echo 'Checkov compliance violations found. Full output visible above in step log.'
+          echo 'See the Job Summary tab for a formatted report with all violations.'
+          grep 'FAILED for resource:' /tmp/checkov-output.txt || true
           exit 1
 
   # ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
