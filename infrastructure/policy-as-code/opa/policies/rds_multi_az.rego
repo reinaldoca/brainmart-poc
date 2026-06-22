@@ -1,168 +1,101 @@
-# ──────────────────────────────────────────────────────────────────────────────
 # infrastructure/policy-as-code/opa/policies/rds_multi_az.rego
+# OPA POLICY: Validate RDS configuration for clinical trial compliance
 #
-# POLÍTICA OPA: Validar Multi-AZ en bases de datos de PRODUCCIÓN
+# REGULATORY CONTEXT:
+#   - GCP ICH E6(R2) s5.5.3: Systems must have service continuity
+#   - FDA 21 CFR Part 11 s11.10(c): PHI data encryption mandatory
 #
-# PROPÓSITO: Los ensayos clínicos en producción no pueden tolerar downtime
-# de base de datos. Multi-AZ garantiza failover automático en < 2 minutos
-# si la instancia primaria falla.
-#
-# CONTEXTO REGULATORIO:
-#   - GCP ICH E6(R2) §5.5.3: Los sistemas deben tener continuidad de servicio
-#   - FDA 21 CFR Part 11: Los sistemas de registros electrónicos deben estar
-#     disponibles para auditorías en cualquier momento
-#
-# CÓMO FUNCIONA:
-#   1. El pipeline genera el plan de Terraform: terraform show -json tfplan.binary
-#   2. conftest test tfplan.json --policy policies/ valida el JSON contra este Rego
-#   3. Si la policy falla, el pipeline se detiene ANTES del apply
-#
-# USO LOCAL:
-#   terraform plan -out=tfplan.binary
-#   terraform show -json tfplan.binary > tfplan.json
-#   conftest test tfplan.json --policy . --namespace brainmart
-# ──────────────────────────────────────────────────────────────────────────────
+# LOCAL USAGE:
+#   conftest test tfplan.json --policy . --namespace brainmart.rds
 
 package brainmart.rds
 
 import rego.v1
 
-# ── REGLA PRINCIPAL: deny ──
-# OPA evalúa todas las reglas 'deny'. Si alguna produce un mensaje,
-# conftest reporta la violación y el pipeline falla.
+# ---------------------------------------------------------------------------
+# DENY rules - any match blocks the pipeline
+# ---------------------------------------------------------------------------
 
-# Regla: las instancias RDS en producción DEBEN tener multi_az = true
+# Production RDS MUST have multi_az = true
 deny contains msg if {
-    # Recorrer todos los cambios planificados en el plan de Terraform
     some resource in input.resource_changes
-
-    # Solo evaluar instancias RDS (aws_db_instance)
     resource.type == "aws_db_instance"
-
-    # Solo evaluar recursos que se van a crear o actualizar (no destruir)
     action_creates_or_updates(resource.change.actions)
-
-    # Obtener la configuración después del apply
     config := resource.change.after
-
-    # Verificar si este recurso es de producción
     is_production_resource(config)
-
-    # Verificar que multi_az NO está habilitado
     not config.multi_az
-
-    # Construir el mensaje de error con toda la información necesaria
     msg := sprintf(
-        "❌ [RDS Multi-AZ PROD] Instancia RDS '%s' en producción debe tener multi_az = true. " +
-        "Requisito: GCP ICH E6(R2) §5.5.3 y FDA 21 CFR Part 11 (disponibilidad). " +
-        "Ambiente detectado: '%s'. Instance class: '%s'.",
+        "[RDS Multi-AZ PROD] Instance '%s' in production must have multi_az=true. Requirement: GCP ICH E6(R2) s5.5.3 + FDA 21 CFR Part 11. Environment: '%s'. Class: '%s'.",
         [resource.address, config.tags.Environment, config.instance_class]
     )
 }
 
-# Regla: las instancias RDS en producción DEBEN tener backup_retention_period >= 35
+# Production RDS MUST have backup_retention_period >= 35 days (GCP ICH E6 R2)
 deny contains msg if {
     some resource in input.resource_changes
-
     resource.type == "aws_db_instance"
     action_creates_or_updates(resource.change.actions)
-
     config := resource.change.after
-
     is_production_resource(config)
-
-    # Verificar que el backup_retention_period es insuficiente
     config.backup_retention_period < 35
-
     msg := sprintf(
-        "❌ [RDS Backup PROD] Instancia RDS '%s' en producción tiene backup_retention_period = %d días. " +
-        "Mínimo requerido: 35 días (GCP ICH E6(R2) Requisito de retención de datos de ensayos clínicos). " +
-        "Actual: %d días.",
-        [resource.address, config.backup_retention_period, config.backup_retention_period]
+        "[RDS Backup PROD] Instance '%s' has backup=%d days. Minimum 35 days required by GCP ICH E6(R2) for clinical trial data retention.",
+        [resource.address, config.backup_retention_period]
     )
 }
 
-# Regla: las instancias RDS SIEMPRE deben tener cifrado habilitado
+# ALL environments: RDS MUST have storage_encrypted = true
 deny contains msg if {
     some resource in input.resource_changes
-
     resource.type == "aws_db_instance"
     action_creates_or_updates(resource.change.actions)
-
     config := resource.change.after
-
-    # Esta regla aplica a TODOS los ambientes (no solo prod)
     not config.storage_encrypted
-
     msg := sprintf(
-        "❌ [RDS Encryption] Instancia RDS '%s' no tiene storage_encrypted = true. " +
-        "OBLIGATORIO en todos los ambientes. " +
-        "Requisito: FDA 21 CFR Part 11 §11.10(c) - cifrado de datos de PHI. " +
-        "El SCP de Capa 0 también bloqueará este deploy en AWS.",
+        "[RDS Encryption] Instance '%s' does not have storage_encrypted=true. MANDATORY in all environments per FDA 21 CFR Part 11 s11.10(c) PHI encryption.",
         [resource.address]
     )
 }
 
-# Regla: las instancias RDS en producción DEBEN tener deletion_protection = true
+# Production RDS MUST have deletion_protection = true
 deny contains msg if {
     some resource in input.resource_changes
-
     resource.type == "aws_db_instance"
     action_creates_or_updates(resource.change.actions)
-
     config := resource.change.after
-
     is_production_resource(config)
-
     not config.deletion_protection
-
     msg := sprintf(
-        "❌ [RDS Deletion Protection] Instancia RDS '%s' en producción debe tener " +
-        "deletion_protection = true para prevenir eliminación accidental de datos de pacientes. " +
-        "Requisito: GCP ICH E6(R2) - preservación de datos de ensayos clínicos.",
+        "[RDS Deletion Protection] Instance '%s' in production must have deletion_protection=true per GCP ICH E6(R2) clinical trial data preservation.",
         [resource.address]
     )
 }
 
-# ── FUNCIONES AUXILIARES ──
+# ---------------------------------------------------------------------------
+# WARN rules - reported but do NOT block the pipeline
+# ---------------------------------------------------------------------------
 
-# Determina si un resource action crea o actualiza (no destruye ni no-op)
+warn contains msg if {
+    some resource in input.resource_changes
+    resource.type == "aws_db_instance"
+    action_creates_or_updates(resource.change.actions)
+    config := resource.change.after
+    config.tags.Environment in {"staging", "uat"}
+    config.backup_retention_period < 14
+    msg := sprintf(
+        "[RDS Backup STAGING] Instance '%s' has only %d days of backup. Recommended >=14 days for staging.",
+        [resource.address, config.backup_retention_period]
+    )
+}
+
+# ---------------------------------------------------------------------------
+# HELPER functions
+# ---------------------------------------------------------------------------
+
 action_creates_or_updates(actions) if {
     actions[_] in {"create", "update"}
 }
 
-# Determina si un recurso es de producción basándose en sus tags o nombre
-is_production_resource(config) if {
-    config.tags.Environment == "prod"
-}
-
-is_production_resource(config) if {
-    config.tags.Environment == "production"
-}
-
-# También detectar por el identificador del recurso (brainmart-prod-*)
-is_production_resource(config) if {
-    contains(config.identifier, "-prod-")
-}
-
-# ── REGLAS DE ADVERTENCIA (warn) ──
-# Las advertencias no fallan el pipeline pero aparecen en el reporte
-
-# Advertencia: staging debería tener backup_retention_period >= 14 días
-warn contains msg if {
-    some resource in input.resource_changes
-
-    resource.type == "aws_db_instance"
-    action_creates_or_updates(resource.change.actions)
-
-    config := resource.change.after
-
-    config.tags.Environment in {"staging", "uat"}
-    config.backup_retention_period < 14
-
-    msg := sprintf(
-        "⚠️  [RDS Backup STAGING] Instancia RDS '%s' en staging tiene solo %d días de backup. " +
-        "Recomendado: >= 14 días para staging (permite rollback de releases de 2 semanas).",
-        [resource.address, config.backup_retention_period]
-    )
-}
+is_production_resource(config) if { config.tags.Environment == "prod" }
+is_production_resource(config) if { config.tags.Environment == "production" }
+is_production_resource(config) if { contains(config.identifier, "-prod-") }
