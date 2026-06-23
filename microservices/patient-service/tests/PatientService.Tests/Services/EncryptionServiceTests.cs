@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using PatientService.Services;
 using System.Security.Cryptography;
+using Xunit;
 
 namespace PatientService.Tests.Services;
 

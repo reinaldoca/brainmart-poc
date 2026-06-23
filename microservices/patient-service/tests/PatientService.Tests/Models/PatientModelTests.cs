@@ -4,6 +4,7 @@
 
 using PatientService.Models;
 using System.ComponentModel.DataAnnotations;
+using Xunit;
 
 namespace PatientService.Tests.Models;
 
