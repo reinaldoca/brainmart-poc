@@ -293,15 +293,10 @@ jobs:
             --logger "trx;LogFileName=test-results.trx"
 
       - name: SonarQube Scan (.NET)
-        # Requires repo secrets/variables: SONAR_TOKEN, SONAR_HOST_URL, SONAR_ORGANIZATION
-        # SonarCloud setup: https://sonarcloud.io -> My Projects -> Analyze new project
-        # SONAR_HOST_URL  (variable) = https://sonarcloud.io
-        # SONAR_ORGANIZATION (variable) = your GitHub org slug (e.g. 'my-org')
-        # SONAR_TOKEN     (secret)   = token from sonarcloud.io/account/security
-        # Skipped gracefully when SONAR_TOKEN is not configured (forks, contributors).
-        # env.SONAR_TOKEN is set at job level above - secrets context not available in if:
+        # Requires: SONAR_TOKEN (secret), SONAR_HOST_URL + SONAR_ORGANIZATION (variables).
+        # Skipped when SONAR_TOKEN is not configured (env set at job level).
         if: ${{ env.SONAR_TOKEN != '' }}
-        uses: SonarSource/sonarqube-scan-action@v5
+        uses: SonarSource/sonarqube-scan-action@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -311,21 +306,20 @@ jobs:
           args: >
             -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
             -Dsonar.projectKey=brainmart-patient-service
-            -Dsonar.projectName=Brainmart Patient Service
+            "-Dsonar.projectName=Brainmart Patient Service"
             -Dsonar.sources=src
             -Dsonar.cs.opencover.reportsPaths=**/coverage.opencover.xml
             -Dsonar.cs.vstest.reportsPaths=**/TestResults/*.trx
             -Dsonar.qualitygate.wait=false
-
       - name: 📦 Instalar dependencias Angular
         run: |
           cd frontend/patient-dashboard
           npm ci
 
       - name: SonarQube Scan (Angular)
-        # Skipped when SONAR_TOKEN secret is not configured.
+        # Skipped when SONAR_TOKEN is not configured.
         if: ${{ env.SONAR_TOKEN != '' }}
-        uses: SonarSource/sonarqube-scan-action@v5
+        uses: SonarSource/sonarqube-scan-action@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -335,10 +329,9 @@ jobs:
           args: >
             -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
             -Dsonar.projectKey=brainmart-patient-dashboard
-            -Dsonar.projectName=Brainmart Patient Dashboard
+            "-Dsonar.projectName=Brainmart Patient Dashboard"
             -Dsonar.sources=src
             -Dsonar.qualitygate.wait=false
-
       - name: 🔍 Snyk SCA (.NET dependencies)
         uses: snyk/actions/dotnet@master
         env:
