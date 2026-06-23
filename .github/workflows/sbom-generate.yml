@@ -1,12 +1,12 @@
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 # pipeline/.github/workflows/sbom-generate.yml
 #
 # Genera el SBOM (Software Bill of Materials) en formato SPDX
 # para todas las imágenes Docker y el código fuente.
 # Se ejecuta en cada release para generar evidencia de proveniencia.
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 
-name: 📋 SBOM Generation
+name: "📋 SBOM Generation"
 
 on:
   release:

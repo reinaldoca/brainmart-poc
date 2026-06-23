@@ -1,12 +1,12 @@
-﻿# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 # pipeline/.github/workflows/policy-check.yml
 #
 # Workflow independiente para ejecutar Checkov + OPA en PRs.
 # Se puede ejecutar sin el pipeline completo de CI/CD.
 # Útil para revisores que quieren validar cambios de IaC rápidamente.
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 
-name: 🔍 Policy-as-Code Standalone
+name: "🔍 Policy-as-Code Standalone"
 
 on:
   pull_request:
