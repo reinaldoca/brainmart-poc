@@ -94,8 +94,11 @@ public class KmsEncryptionService : IEncryptionService
 
             aes.Encrypt(nonce, plaintextBytes, ciphertext, tag);
 
-            // PASO 3: Limpiar la DEK en plano de la memoria inmediatamente
-            keyResponse.Plaintext.GetBuffer().AsSpan().Clear();
+            // PASO 3: Limpiar la DEK en plano de la memoria (usar ToArray+ZeroMemory
+            // en lugar de GetBuffer() que lanza UnauthorizedAccessException cuando
+            // el MemoryStream fue creado con new MemoryStream(byte[])).
+            var plaintextDekBytes = keyResponse.Plaintext.ToArray();
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(plaintextDekBytes);
 
             // Combinar ciphertext + tag (GCM tag para integridad)
             var ciphertextWithTag = new byte[ciphertext.Length + tag.Length];
@@ -154,8 +157,9 @@ public class KmsEncryptionService : IEncryptionService
             using var aes = new AesGcm(decryptResponse.Plaintext.ToArray(), tagSize);
             aes.Decrypt(nonce, ciphertext, tag, plaintext);
 
-            // PASO 3: Limpiar la DEK
-            decryptResponse.Plaintext.GetBuffer().AsSpan().Clear();
+            // PASO 3: Limpiar la DEK descifrada de la memoria.
+            var plaintextDekBytes2 = decryptResponse.Plaintext.ToArray();
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(plaintextDekBytes2);
 
             return Encoding.UTF8.GetString(plaintext);
         }

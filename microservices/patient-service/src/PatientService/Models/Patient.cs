@@ -54,13 +54,13 @@ public record PatientDto(
 public record PatientSummaryDto(Guid Id, Guid TrialId, PatientStatus Status, DateTimeOffset CreatedAt);
 
 public record CreatePatientRequest(
-    [Required][StringLength(100)] string FirstName,
-    [Required][StringLength(100)] string LastName,
-    [Required][StringLength(20)]  string DocumentId,
-    [Required][EmailAddress]      string Email,
-    [StringLength(500)]           string? Address,
-    [Required] Guid   TrialId,
-    [Required] DateTimeOffset ConsentDate
+    [property: Required][property: StringLength(100)] string FirstName,
+    [property: Required][property: StringLength(100)] string LastName,
+    [property: Required][property: StringLength(20)]  string DocumentId,
+    [property: Required][property: EmailAddress]      string Email,
+    [property: StringLength(500)]                     string? Address,
+    [property: Required] Guid   TrialId,
+    [property: Required] DateTimeOffset ConsentDate
 );
 
 public record UpdatePatientRequest(
