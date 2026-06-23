@@ -249,6 +249,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [policy-check]
+    # Expose SONAR_TOKEN as job-level env so it is available in step if: conditions.
+    # secrets context is not accessible in step if:, but env context is.
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     steps:
       - name: ???? Checkout c??digo
@@ -295,7 +299,8 @@ jobs:
         # SONAR_ORGANIZATION (variable) = your GitHub org slug (e.g. 'my-org')
         # SONAR_TOKEN     (secret)   = token from sonarcloud.io/account/security
         # Skipped gracefully when SONAR_TOKEN is not configured (forks, contributors).
-        if: ${{ secrets.SONAR_TOKEN != '' }}
+        # env.SONAR_TOKEN is set at job level above - secrets context not available in if:
+        if: ${{ env.SONAR_TOKEN != '' }}
         uses: SonarSource/sonarqube-scan-action@v5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -319,7 +324,7 @@ jobs:
 
       - name: SonarQube Scan (Angular)
         # Skipped when SONAR_TOKEN secret is not configured.
-        if: ${{ secrets.SONAR_TOKEN != '' }}
+        if: ${{ env.SONAR_TOKEN != '' }}
         uses: SonarSource/sonarqube-scan-action@v5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
