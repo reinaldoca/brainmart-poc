@@ -347,7 +347,6 @@ jobs:
           command: test
           args: >
             --severity-threshold=high
-            --project-name=brainmart-patient-service
             --file=microservices/patient-service/PatientService.sln
             --skip-unresolved
 
