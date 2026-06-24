@@ -251,7 +251,7 @@ jobs:
     needs: [policy-check]
     # Expose SONAR_TOKEN as job-level env so it is available in step if: conditions.
     # secrets context is not accessible in step if:, but env context is.
-        env:
+    env:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       SNYK_TOKEN:  ${{ secrets.SNYK_TOKEN }}
 
