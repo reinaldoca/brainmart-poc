@@ -44,7 +44,7 @@ permissions:
 env:
   # Versiones fijas para reproducibilidad
   TERRAFORM_VERSION: "1.7.5"
-  TERRAGRUNT_VERSION: "0.55.18"
+  TERRAGRUNT_VERSION: "0.67.0"
   DOTNET_VERSION: "8.0.x"
   NODE_VERSION: "22.x"
 
@@ -414,7 +414,7 @@ jobs:
         run: |
           cd infrastructure/environments/${{ matrix.environment }}
           terragrunt run --all init \
-            --non-interactive \
+            --terragrunt-non-interactive \
             --terragrunt-parallelism 5
 
       - name: 🌍 Terragrunt Plan
@@ -422,7 +422,7 @@ jobs:
         run: |
           cd infrastructure/environments/${{ matrix.environment }}
           terragrunt run --all plan \
-            --non-interactive \
+            --terragrunt-non-interactive \
             -out=tfplan.binary \
             2>&1 | tee plan-output.txt
 
@@ -663,6 +663,12 @@ jobs:
           upload-artifact: true
           artifact-name: sbom-source-angular
 
+      - name: Instalar Cosign para attestation
+        # Cosign is installed per-job - it is not shared between jobs.
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: "v2.2.3"
+
       - name: Adjuntar SBOM a la firma Cosign
         # Requires built+pushed image in ECR - skipped if image is not available.
         # Remove continue-on-error when the full build pipeline is enabled.
@@ -717,7 +723,7 @@ jobs:
         run: |
           cd infrastructure/environments/dev
           terragrunt run --all apply \
-            --non-interactive \
+            --terragrunt-non-interactive \
             --terragrunt-parallelism 3 \
             -auto-approve
 
@@ -786,7 +792,7 @@ jobs:
         run: |
           cd infrastructure/environments/staging
           terragrunt run --all apply \
-            --non-interactive \
+            --terragrunt-non-interactive \
             --terragrunt-parallelism 3 \
             -auto-approve
 
@@ -896,7 +902,7 @@ jobs:
         run: |
           cd infrastructure/environments/prod
           terragrunt run --all apply \
-            --non-interactive \
+            --terragrunt-non-interactive \
             --terragrunt-parallelism 2 \
             -auto-approve
 
@@ -904,7 +910,7 @@ jobs:
         run: |
           cd infrastructure/environments/prod/dr-eu-west-1
           terragrunt run --all apply \
-            --non-interactive \
+            --terragrunt-non-interactive \
             -auto-approve
 
       - name: 🚀 Deploy microservicio a ECS (PROD)
