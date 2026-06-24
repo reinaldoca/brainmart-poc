@@ -529,19 +529,23 @@ jobs:
           severity: "CRITICAL,HIGH"
           ignore-unfixed: true
 
-      - name: Crear SARIF vacio si Trivy no lo genero
+      - name: Preparar SARIF para upload
+        id: sarif-check
         if: always()
         run: |
-          if [ ! -f trivy-results.sarif ]; then
-            echo '{"version":"2.1.0","$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","runs":[]}' > trivy-results.sarif
-            echo "Created empty SARIF fallback (Trivy scan did not produce output)"
+          if [ -f trivy-results.sarif ] && [ -s trivy-results.sarif ]; then
+            echo "sarif_ready=true" >> $GITHUB_OUTPUT
+            echo "trivy-results.sarif exists ($(wc -c < trivy-results.sarif) bytes) - uploading"
           else
-            echo "trivy-results.sarif exists ($(wc -c < trivy-results.sarif) bytes)"
+            # GitHub API requires at least 1 run with a tool driver - empty runs:[] is rejected
+            # Only create fallback so downstream steps don't fail; skip the upload
+            echo "sarif_ready=false" >> $GITHUB_OUTPUT
+            echo "Trivy did not generate SARIF - skipping upload"
           fi
 
       - name: Upload Trivy SARIF a GitHub Security
         uses: github/codeql-action/upload-sarif@v4
-        if: always()
+        if: always() && steps.sarif-check.outputs.sarif_ready == 'true'
         continue-on-error: true
         with:
           sarif_file: "trivy-results.sarif"
