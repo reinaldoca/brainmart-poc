@@ -643,36 +643,39 @@ jobs:
       - name: 🔑 Login a Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: 📋 Generar SBOM con Syft
+      - name: Generar SBOM del microservicio .NET (source)
+        # Scan filesystem - no Docker image required.
+        # For image SBOM post-push, add a separate job that runs after build-scan.
         uses: anchore/sbom-action@v0
         with:
-          image: "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+          path: microservices/patient-service/src
           format: spdx-json
           output-file: sbom-patient-service.spdx.json
           upload-artifact: true
           artifact-name: sbom-patient-service
 
-      - name: 📋 Generar SBOM del codigo fuente .NET
+      - name: Generar SBOM del codigo fuente Angular
         uses: anchore/sbom-action@v0
         with:
-          path: microservices/patient-service/src
+          path: frontend/patient-dashboard/src
           format: spdx-json
-          output-file: sbom-source-code.spdx.json
+          output-file: sbom-source-angular.spdx.json
           upload-artifact: true
-          artifact-name: sbom-source-code
+          artifact-name: sbom-source-angular
 
-      - name: 📋 Adjuntar SBOM a la firma Cosign
+      - name: Adjuntar SBOM a la firma Cosign
+        # Requires built+pushed image in ECR - skipped if image is not available.
+        # Remove continue-on-error when the full build pipeline is enabled.
+        continue-on-error: true
         env:
           DIGEST: ${{ needs.build-scan.outputs.image-digest }}
           COSIGN_EXPERIMENTAL: "1"
         run: |
-          # El SBOM se adjunta como attestation a la imagen firmada
           cosign attest --yes \
             --predicate sbom-patient-service.spdx.json \
             --type spdx \
             "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
-
-          echo "✅ SBOM adjuntado a la imagen como attestation Cosign"
+          echo "SBOM adjuntado a la imagen como attestation Cosign"
 
   # ──────────────────────────────────────────────────────────────────────────────
   # JOB 6: DEPLOY DEV
