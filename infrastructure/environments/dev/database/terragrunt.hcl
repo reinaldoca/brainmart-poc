@@ -37,10 +37,12 @@ dependency "network" {
   # Mock outputs para poder hacer plan sin que network este? desplegado
   # U?til en CI/CD para validar la sintaxis antes del primer deploy
   mock_outputs = {
-    vpc_id              = "vpc-00000000000000000"
-    isolated_subnet_ids = ["subnet-00000000000000001", "subnet-00000000000000002"]
-    private_subnet_ids  = ["subnet-00000000000000003", "subnet-00000000000000004"]
-    vpc_cidr_block      = "10.10.0.0/16"
+    vpc_id                  = "vpc-00000000000000000"
+    isolated_subnet_ids     = ["subnet-00000000000000001", "subnet-00000000000000002"]
+    private_subnet_ids      = ["subnet-00000000000000003", "subnet-00000000000000004"]
+    vpc_cidr_block          = "10.10.0.0/16"
+    db_subnet_group_name    = "brainmart-dev-db-subnet-group"
+    rds_security_group_id   = "sg-00000000000000001"
   }
   mock_outputs_allowed_terraform_commands = ["validate", "plan", "init"]
 }
@@ -50,10 +52,12 @@ inputs = {
   environment = "dev"
   name_prefix = "brainmart-dev"
 
-  # ?? Red: valores de la dependencia de network ??
-  vpc_id             = dependency.network.outputs.vpc_id
-  subnet_ids         = dependency.network.outputs.isolated_subnet_ids
-  allowed_cidr_blocks = [dependency.network.outputs.vpc_cidr_block]
+  # Red: valores de la dependencia de network
+  vpc_id                = dependency.network.outputs.vpc_id
+  subnet_ids            = dependency.network.outputs.isolated_subnet_ids
+  allowed_cidr_blocks   = [dependency.network.outputs.vpc_cidr_block]
+  db_subnet_group_name  = dependency.network.outputs.db_subnet_group_name
+  rds_security_group_id = dependency.network.outputs.rds_security_group_id
 
   # ?? Motor de base de datos ??
   engine         = "postgres"
