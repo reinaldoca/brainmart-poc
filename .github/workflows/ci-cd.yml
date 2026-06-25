@@ -427,6 +427,7 @@ jobs:
           cd infrastructure/environments/${{ matrix.environment }}
           terragrunt run-all plan \
             --terragrunt-non-interactive \
+            -lock=false \
             -out=tfplan.binary \
             2>&1 | tee plan-output.txt
 
@@ -727,6 +728,7 @@ jobs:
           cd infrastructure/environments/dev
           terragrunt run-all apply \
             --terragrunt-non-interactive \
+            -lock=false \
             --terragrunt-parallelism 3 \
             -auto-approve
 
@@ -797,6 +799,7 @@ jobs:
           cd infrastructure/environments/staging
           terragrunt run-all apply \
             --terragrunt-non-interactive \
+            -lock=false \
             --terragrunt-parallelism 3 \
             -auto-approve
 
@@ -908,6 +911,7 @@ jobs:
           cd infrastructure/environments/prod
           terragrunt run-all apply \
             --terragrunt-non-interactive \
+            -lock=false \
             --terragrunt-parallelism 2 \
             -auto-approve
 
@@ -917,6 +921,7 @@ jobs:
           cd infrastructure/environments/prod/dr-eu-west-1
           terragrunt run-all apply \
             --terragrunt-non-interactive \
+            -lock=false \
             -auto-approve
 
       - name: 🚀 Deploy microservicio a ECS (PROD)
