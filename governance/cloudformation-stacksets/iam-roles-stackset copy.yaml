@@ -82,13 +82,6 @@ Resources:
               Bool:
                 aws:MultiFactorAuthPresent: false  # false = también permite roles (CI/CD)
 
-          - Sid: AllowGitHubActionsAssumeRole
-            Effect: Allow
-            Principal:
-              AWS: !Sub "arn:aws:iam::${SharedServicesAccountId}:role/GitHubActionsRole"
-            Action: sts:AssumeRole
-
-
       # ── Políticas gestionadas base ──
       ManagedPolicyArns:
         # ReadOnly como base - los permisos de escritura se otorgan explícitamente abajo
