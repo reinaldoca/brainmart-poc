@@ -464,11 +464,63 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────────
   # JOB 4: BUILD + SCAN + COSIGN
   # ──────────────────────────────────────────────────────────────────────────────
+  # ────────────────────────────────────────────────────────────────────────────
+  # JOB: BOOTSTRAP ECR
+  # Crea el repositorio ECR si no existe. ECR es un recurso compartido de
+  # larga duracion (Shared Services) — no pertenece a ningun ambiente.
+  # ────────────────────────────────────────────────────────────────────────────
+  bootstrap-ecr:
+    name: Bootstrap ECR Repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [sast-sca]
+    outputs:
+      repository_uri: ${{ steps.ensure-ecr.outputs.repository_uri }}
+
+    steps:
+      - name: Configurar credenciales AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}:role/GitHubActionsRole
+          role-session-name: BootstrapECR-${{ github.sha }}
+          aws-region: us-east-1
+
+      - name: Crear repositorio ECR si no existe
+        id: ensure-ecr
+        run: |
+          REPO_NAME="${{ env.IMAGE_NAME }}"
+          if aws ecr describe-repositories --repository-names "$REPO_NAME" --region us-east-1 > /dev/null 2>&1; then
+            echo "Repository $REPO_NAME already exists"
+          else
+            echo "Creating ECR repository $REPO_NAME..."
+            aws ecr create-repository \
+              --repository-name "$REPO_NAME" \
+              --image-tag-mutability IMMUTABLE \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=KMS \
+              --region us-east-1
+            echo "ECR repository created"
+          fi
+          REPO_URI=$(aws ecr describe-repositories --repository-names "$REPO_NAME" --region us-east-1 --query "repositories[0].repositoryUri" --output text)
+          echo "repository_uri=$REPO_URI" >> $GITHUB_OUTPUT
+          echo "ECR URI: $REPO_URI"
+
+      - name: Aplicar lifecycle policy al repositorio
+        run: |
+          POLICY_JSON='
+{"rules":[{"rulePriority":1,"description":"Keep last 10 sha builds","selection":{"tagStatus":"tagged","tagPrefixList":["sha-"],"countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}},{"rulePriority":2,"description":"Expire untagged after 14 days","selection":{"tagStatus":"untagged","countType":"sinceImagePushed","countUnit":"days","countNumber":14},"action":{"type":"expire"}}]}
+'
+          aws ecr put-lifecycle-policy \
+            --repository-name "${{ env.IMAGE_NAME }}" \
+            --lifecycle-policy-text "$POLICY_JSON" \
+            --region us-east-1
+          echo "Lifecycle policy applied"
+
   build-scan:
     name: 🐳 Build + Trivy + Cosign
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    needs: [sast-sca]
+    needs: [sast-sca, bootstrap-ecr]
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
       image-tags: ${{ steps.meta.outputs.tags }}

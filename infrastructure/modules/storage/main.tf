@@ -73,6 +73,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "spa" {
     id     = "spa-maintenance"
     status = "Enabled"
 
+    # filter required by provider >= 4.x (empty filter = apply to all objects)
+    filter {}
+
     # CKV_AWS_300: Abort incomplete multipart uploads
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
@@ -223,9 +226,12 @@ resource "aws_wafv2_web_acl" "cloudfront" {
       managed_rule_group_statement {
         name        = "AWSManagedRulesCommonRuleSet"
         vendor_name = "AWS"
-        # Excluir reglas que generan falsos positivos en APIs REST
-        excluded_rule {
+        # rule_action_override replaces deprecated excluded_rule (provider >= 3.x)
+        rule_action_override {
           name = "SizeRestrictions_BODY"
+          action_to_use {
+            count {}
+          }
         }
       }
     }
@@ -543,7 +549,7 @@ resource "aws_athena_workgroup" "audit" {
 
       encryption_configuration {
         encryption_option = "SSE_KMS"
-        kms_key           = var.kms_key_arn
+        kms_key_arn       = var.kms_key_arn
       }
     }
 
