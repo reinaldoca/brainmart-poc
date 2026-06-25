@@ -507,12 +507,13 @@ jobs:
 
       - name: Aplicar lifecycle policy al repositorio
         run: |
-          POLICY_JSON='
-{"rules":[{"rulePriority":1,"description":"Keep last 10 sha builds","selection":{"tagStatus":"tagged","tagPrefixList":["sha-"],"countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}},{"rulePriority":2,"description":"Expire untagged after 14 days","selection":{"tagStatus":"untagged","countType":"sinceImagePushed","countUnit":"days","countNumber":14},"action":{"type":"expire"}}]}
-'
+          # Escribir el JSON a un archivo temporal para evitar problemas de escaping en YAML
+          cat > /tmp/ecr-lifecycle.json << 'HEREDOC'
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 sha builds","selection":{"tagStatus":"tagged","tagPrefixList":["sha-"],"countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}},{"rulePriority":2,"description":"Expire untagged after 14 days","selection":{"tagStatus":"untagged","countType":"sinceImagePushed","countUnit":"days","countNumber":14},"action":{"type":"expire"}}]}
+          HEREDOC
           aws ecr put-lifecycle-policy \
             --repository-name "${{ env.IMAGE_NAME }}" \
-            --lifecycle-policy-text "$POLICY_JSON" \
+            --lifecycle-policy-text file:///tmp/ecr-lifecycle.json \
             --region us-east-1
           echo "Lifecycle policy applied"
 
