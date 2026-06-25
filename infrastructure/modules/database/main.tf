@@ -389,7 +389,7 @@ resource "aws_db_instance" "main" {
   # ?? Proteccio?n contra eliminacio?n ??
   # En produccio?n, evitar que alguien borre la BD por error
   deletion_protection    = var.deletion_protection
-  copy_tags_to_snapshots = true
+  copy_tags_to_snapshot = true
 
   tags = merge(var.tags, {
     Name              = "${var.name_prefix}-rds-postgres"
