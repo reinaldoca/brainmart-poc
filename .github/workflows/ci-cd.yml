@@ -436,9 +436,8 @@ jobs:
             aws s3api create-bucket --bucket "$BUCKET" --region "$REGION"
             aws s3api put-bucket-versioning --bucket "$BUCKET" \
               --versioning-configuration Status=Enabled
-            cat > /tmp/sse.json << EOF
-            {"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"aws:kms","KMSMasterKeyID":"${KMS_ARN}"},"BucketKeyEnabled":true}]}
-            EOF
+            printf "{\"Rules\":[{\"ApplyServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"aws:kms\",\"KMSMasterKeyID\":\"%s\"},\"BucketKeyEnabled\":true}]}" \
+              "$KMS_ARN" > /tmp/sse.json
             aws s3api put-bucket-encryption --bucket "$BUCKET" \
               --server-side-encryption-configuration file:///tmp/sse.json
             aws s3api put-public-access-block --bucket "$BUCKET" \
@@ -764,18 +763,14 @@ jobs:
           fi
 
           # Compliance attestation (continue-on-error handles immutable tag)
+          # Write predicate to temp file (avoids heredoc CRLF issues)
+          printf "{\"buildDate\":\"%s\",\"gitCommit\":\"%s\",\"gitBranch\":\"%s\",\"buildPipeline\":\"github-actions\",\"fda21cfr11\":\"validated\"}" \
+            "${{ github.event.repository.updated_at }}" "${{ github.sha }}" "${{ github.ref_name }}" \
+            > /tmp/cosign-predicate.json
           cosign attest --yes \
-            --predicate - \
+            --predicate /tmp/cosign-predicate.json \
             --type "https://brainmart.health/compliance/v1" \
-            "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}" << EOF
-          {
-            "buildDate": "${{ github.event.repository.updated_at }}",
-            "gitCommit": "${{ github.sha }}",
-            "gitBranch": "${{ github.ref_name }}",
-            "buildPipeline": "github-actions",
-            "fda21cfr11": "validated"
-          }
-          EOF
+            "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
 
   # ──────────────────────────────────────────────────────────────────────────────
   # JOB 5: SBOM GENERATION
