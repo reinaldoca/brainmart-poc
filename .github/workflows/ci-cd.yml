@@ -486,7 +486,8 @@ jobs:
 
     strategy:
       matrix:
-        environment: [dev, staging]
+        # environment: [dev, staging]
+        environment: [dev]
 
     steps:
       - name: 📥 Checkout codigo
