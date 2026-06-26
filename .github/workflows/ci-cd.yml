@@ -479,7 +479,7 @@ jobs:
   terragrunt-plan:
     name: 🌍 Terragrunt Plan
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     needs: [policy-check, bootstrap-infra]
 
     strategy:
@@ -518,7 +518,7 @@ jobs:
           cd infrastructure/environments/${{ matrix.environment }}
           terragrunt run-all init \
             --terragrunt-non-interactive \
-            --terragrunt-parallelism 5
+            --terragrunt-parallelism 1
 
       - name: Terragrunt Plan
         id: plan
@@ -748,16 +748,20 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
           COSIGN_EXPERIMENTAL: "1"  # Habilita keyless signing
         run: |
-          # Cosign firma la imagen con el certificado OIDC de GitHub Actions
-          # La firma se almacena en el mismo repositorio ECR
-          # No necesita secretos: usa OIDC para autenticarse con sigstore
-          cosign sign --yes \
-            "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+          # Skip signing if .att tag already exists in ECR (immutable tag)
+          ATT_TAG="sha256-${DIGEST#sha256:}.att"
+          if aws ecr describe-images \
+               --repository-name "${{ env.IMAGE_NAME }}" \
+               --image-ids imageTag="$ATT_TAG" \
+               --region us-east-1 >/dev/null 2>&1; then
+            echo "Image already signed ($ATT_TAG exists). Skipping."
+          else
+            cosign sign --yes \
+              "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+            echo "Image signed with Cosign (keyless OIDC)"
+          fi
 
-          echo "✅ Imagen firmada con Cosign (keyless OIDC)"
-          echo "Digest: ${DIGEST}"
-
-          # Agregar anotaciones de compliance a la firma
+          # Compliance attestation (continue-on-error handles immutable tag)
           cosign attest --yes \
             --predicate - \
             --type "https://brainmart.health/compliance/v1" \
@@ -767,14 +771,7 @@ jobs:
             "gitCommit": "${{ github.sha }}",
             "gitBranch": "${{ github.ref_name }}",
             "buildPipeline": "github-actions",
-            "complianceChecks": {
-              "checkov": "passed",
-              "sast": "passed",
-              "sca": "passed",
-              "trivy": "passed"
-            },
-            "fda21cfr11": "validated",
-            "gcpCompliant": true
+            "fda21cfr11": "validated"
           }
           EOF
 
@@ -849,7 +846,7 @@ jobs:
   deploy-dev:
     name: 🚀 Deploy DEV
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     needs: [terragrunt-plan, build-scan, sbom-generate]
     if: github.ref != 'refs/heads/main' || github.event_name == 'push'
 
@@ -885,8 +882,8 @@ jobs:
           terragrunt run-all apply \
             --terragrunt-non-interactive \
             -lock=false \
-            --terragrunt-parallelism 3 \
-            -auto-approve
+            --terragrunt-parallelism 1 \
+            -auto-approve 2>&1
 
       - name: 🚀 Deploy microservicio a ECS (DEV)
         run: |
@@ -923,7 +920,7 @@ jobs:
   deploy-staging:
     name: 🚀 Deploy STAGING
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     needs: [deploy-dev]
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')
 
@@ -956,8 +953,8 @@ jobs:
           terragrunt run-all apply \
             --terragrunt-non-interactive \
             -lock=false \
-            --terragrunt-parallelism 3 \
-            -auto-approve
+            --terragrunt-parallelism 1 \
+            -auto-approve 2>&1
 
       - name: 🚀 Deploy microservicio a ECS (STAGING)
         run: |
@@ -1068,8 +1065,8 @@ jobs:
           terragrunt run-all apply \
             --terragrunt-non-interactive \
             -lock=false \
-            --terragrunt-parallelism 2 \
-            -auto-approve
+            --terragrunt-parallelism 1 \
+            -auto-approve 2>&1
 
       - name: 🚀 Terragrunt Apply - DR (eu-west-1)
         continue-on-error: true
@@ -1078,7 +1075,7 @@ jobs:
           terragrunt run-all apply \
             --terragrunt-non-interactive \
             -lock=false \
-            -auto-approve
+            -auto-approve 2>&1
 
       - name: 🚀 Deploy microservicio a ECS (PROD)
         run: |
