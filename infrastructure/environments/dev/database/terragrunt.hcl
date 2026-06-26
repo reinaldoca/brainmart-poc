@@ -44,7 +44,7 @@ dependency "network" {
     db_subnet_group_name    = "brainmart-dev-db-subnet-group"
     rds_security_group_id   = "sg-00000000000000001"
   }
-  mock_outputs_allowed_terraform_commands = ["validate", "plan", "init"]
+  mock_outputs_allowed_terraform_commands = ["validate", "plan", "init", "apply"]
 }
 
 inputs = {

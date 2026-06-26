@@ -17,7 +17,7 @@ dependency "database" {
     kms_key_arn                = "arn:aws:kms:us-east-1:222222222222:key/00000000-0000-0000-0000-000000000000"
     audit_export_lambda_arn    = "arn:aws:lambda:us-east-1:222222222222:function:brainmart-dev-audit-log-export"
   }
-  mock_outputs_allowed_terraform_commands = ["validate", "plan", "init"]
+  mock_outputs_allowed_terraform_commands = ["validate", "plan", "init", "apply"]
 }
 
 inputs = {

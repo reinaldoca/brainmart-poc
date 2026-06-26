@@ -880,10 +880,15 @@ jobs:
         run: |
           apply_module() {
             local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
-            echo ">>> Applying: $MODULE"
+            echo ">>> Refreshing state: $MODULE"
             cd "$GITHUB_WORKSPACE/$MODULE"
+            # refresh-only: sync state with real AWS resources and regenerate outputs.
+            # Fixes stale outputs when outputs.tf was updated after the last apply.
+            terragrunt apply -refresh-only --terragrunt-non-interactive \
+              -lock=false -auto-approve >> "$LOG" 2>&1 || true
+            echo ">>> Applying: $MODULE"
             terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
-              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+              >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
           }
@@ -958,10 +963,15 @@ jobs:
         run: |
           apply_module() {
             local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
-            echo ">>> Applying: $MODULE"
+            echo ">>> Refreshing state: $MODULE"
             cd "$GITHUB_WORKSPACE/$MODULE"
+            # refresh-only: sync state with real AWS resources and regenerate outputs.
+            # Fixes stale outputs when outputs.tf was updated after the last apply.
+            terragrunt apply -refresh-only --terragrunt-non-interactive \
+              -lock=false -auto-approve >> "$LOG" 2>&1 || true
+            echo ">>> Applying: $MODULE"
             terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
-              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+              >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
           }
@@ -1077,10 +1087,15 @@ jobs:
         run: |
           apply_module() {
             local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
-            echo ">>> Applying: $MODULE"
+            echo ">>> Refreshing state: $MODULE"
             cd "$GITHUB_WORKSPACE/$MODULE"
+            # refresh-only: sync state with real AWS resources and regenerate outputs.
+            # Fixes stale outputs when outputs.tf was updated after the last apply.
+            terragrunt apply -refresh-only --terragrunt-non-interactive \
+              -lock=false -auto-approve >> "$LOG" 2>&1 || true
+            echo ">>> Applying: $MODULE"
             terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
-              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+              >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
           }
@@ -1094,10 +1109,15 @@ jobs:
         run: |
           apply_module() {
             local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
-            echo ">>> Applying: $MODULE"
+            echo ">>> Refreshing state: $MODULE"
             cd "$GITHUB_WORKSPACE/$MODULE"
+            # refresh-only: sync state with real AWS resources and regenerate outputs.
+            # Fixes stale outputs when outputs.tf was updated after the last apply.
+            terragrunt apply -refresh-only --terragrunt-non-interactive \
+              -lock=false -auto-approve >> "$LOG" 2>&1 || true
+            echo ">>> Applying: $MODULE"
             terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
-              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+              >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
           }

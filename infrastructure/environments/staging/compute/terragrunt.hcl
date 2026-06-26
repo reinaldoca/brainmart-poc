@@ -21,7 +21,7 @@ dependency "network" {
     alb_security_group_id = "sg-1"
     ecs_security_group_id = "sg-2"
   }
-  mock_outputs_allowed_terraform_commands = ["validate", "plan", "init"]
+  mock_outputs_allowed_terraform_commands = ["validate", "plan", "init", "apply"]
 }
 
 dependency "database" {
@@ -30,7 +30,7 @@ dependency "database" {
     secret_arn  = "arn:aws:secretsmanager:us-east-1:333333333333:secret:brainmart-staging/database/master-password-XXXXXX"
     kms_key_arn = "arn:aws:kms:us-east-1:333333333333:key/00000000-0000-0000-0000-000000000000"
   }
-  mock_outputs_allowed_terraform_commands = ["validate", "plan", "init"]
+  mock_outputs_allowed_terraform_commands = ["validate", "plan", "init", "apply"]
 }
 
 inputs = {
