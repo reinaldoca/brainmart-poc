@@ -878,25 +878,58 @@ jobs:
       - name: 🚀 Terragrunt Apply - DEV
         # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
+          # ── Helper: apply with file-redirect to avoid SIGPIPE ─────────────────
           apply_module() {
             local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
-            echo ">>> Refreshing state: $MODULE"
-            cd "$GITHUB_WORKSPACE/$MODULE"
-            # refresh-only: sync state with real AWS resources and regenerate outputs.
-            # Fixes stale outputs when outputs.tf was updated after the last apply.
-            terragrunt apply -refresh-only --terragrunt-non-interactive \
-              -lock=false -auto-approve >> "$LOG" 2>&1 || true
             echo ">>> Applying: $MODULE"
+            cd "$GITHUB_WORKSPACE/$MODULE"
             terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
-              >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
           }
+
+          # ── Fix: import SG into state if missing (broken-pipe state corruption) ─
+          fix_network_state() {
+            local ENV=$1 PREFIX=$2
+            local NET_DIR="$GITHUB_WORKSPACE/infrastructure/environments/${ENV}/network"
+            cd "$NET_DIR"
+
+            # Check if rds_security_group_id is already in state
+            if terragrunt output -raw rds_security_group_id > /dev/null 2>&1; then
+              echo "network state OK: rds_security_group_id present"
+              return 0
+            fi
+
+            echo "WARNING: rds_security_group_id missing from network state. Attempting recovery..."
+
+            # Find the SG in AWS by name tag
+            SG_ID=$(aws ec2 describe-security-groups \
+              --filters "Name=group-name,Values=${PREFIX}-rds-sg" \
+              --region us-east-1 \
+              --query "SecurityGroups[0].GroupId" \
+              --output text 2>/dev/null)
+
+            if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
+              echo "Found SG in AWS: $SG_ID — importing into state..."
+              terragrunt import --terragrunt-non-interactive -lock=false \
+                aws_security_group.rds "$SG_ID" > /tmp/tg-import-sg.log 2>&1 || true
+              cat /tmp/tg-import-sg.log
+            else
+              echo "SG not found in AWS — will be created by terraform apply"
+            fi
+          }
+
+          # ── Apply network first, then verify outputs before continuing ──────────
           apply_module infrastructure/environments/dev/network
+          fix_network_state "dev" "brainmart-dev"
+          apply_module infrastructure/environments/dev/network
+
           apply_module infrastructure/environments/dev/database
           apply_module infrastructure/environments/dev/storage
           apply_module infrastructure/environments/dev/compute
-      - name: 🚀 Deploy microservicio a ECS (DEV)
+
+      - name: Deploy microservicio a ECS (DEV)
         continue-on-error: true  # ECS cluster may not exist on first deploy
         run: |
           # Actualizar la task definition de ECS con la nueva imagen
@@ -963,18 +996,36 @@ jobs:
         run: |
           apply_module() {
             local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
-            echo ">>> Refreshing state: $MODULE"
-            cd "$GITHUB_WORKSPACE/$MODULE"
-            # refresh-only: sync state with real AWS resources and regenerate outputs.
-            # Fixes stale outputs when outputs.tf was updated after the last apply.
-            terragrunt apply -refresh-only --terragrunt-non-interactive \
-              -lock=false -auto-approve >> "$LOG" 2>&1 || true
             echo ">>> Applying: $MODULE"
+            cd "$GITHUB_WORKSPACE/$MODULE"
             terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
-              >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
           }
+
+          fix_network_state() {
+            local ENV=$1 PREFIX=$2
+            cd "$GITHUB_WORKSPACE/infrastructure/environments/${ENV}/network"
+            if terragrunt output -raw rds_security_group_id > /dev/null 2>&1; then
+              echo "network state OK: rds_security_group_id present"; return 0
+            fi
+            echo "WARNING: rds_security_group_id missing - checking AWS..."
+            SG_ID=$(aws ec2 describe-security-groups \
+              --filters "Name=group-name,Values=${PREFIX}-rds-sg" \
+              --region us-east-1 \
+              --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
+            if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
+              echo "Importing SG $SG_ID into state..."
+              terragrunt import --terragrunt-non-interactive -lock=false \
+                aws_security_group.rds "$SG_ID" > /tmp/tg-import-sg.log 2>&1 || true
+              cat /tmp/tg-import-sg.log
+            else
+              echo "SG not found in AWS - will be created by terraform apply"
+            fi
+          }
+          apply_module infrastructure/environments/staging/network
+          fix_network_state "staging" "brainmart-staging"
           apply_module infrastructure/environments/staging/network
           apply_module infrastructure/environments/staging/database
           apply_module infrastructure/environments/staging/storage
@@ -1087,18 +1138,36 @@ jobs:
         run: |
           apply_module() {
             local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
-            echo ">>> Refreshing state: $MODULE"
-            cd "$GITHUB_WORKSPACE/$MODULE"
-            # refresh-only: sync state with real AWS resources and regenerate outputs.
-            # Fixes stale outputs when outputs.tf was updated after the last apply.
-            terragrunt apply -refresh-only --terragrunt-non-interactive \
-              -lock=false -auto-approve >> "$LOG" 2>&1 || true
             echo ">>> Applying: $MODULE"
+            cd "$GITHUB_WORKSPACE/$MODULE"
             terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
-              >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
           }
+
+          fix_network_state() {
+            local ENV=$1 PREFIX=$2
+            cd "$GITHUB_WORKSPACE/infrastructure/environments/${ENV}/network"
+            if terragrunt output -raw rds_security_group_id > /dev/null 2>&1; then
+              echo "network state OK: rds_security_group_id present"; return 0
+            fi
+            echo "WARNING: rds_security_group_id missing - checking AWS..."
+            SG_ID=$(aws ec2 describe-security-groups \
+              --filters "Name=group-name,Values=${PREFIX}-rds-sg" \
+              --region us-east-1 \
+              --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
+            if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
+              echo "Importing SG $SG_ID into state..."
+              terragrunt import --terragrunt-non-interactive -lock=false \
+                aws_security_group.rds "$SG_ID" > /tmp/tg-import-sg.log 2>&1 || true
+              cat /tmp/tg-import-sg.log
+            else
+              echo "SG not found in AWS - will be created by terraform apply"
+            fi
+          }
+          apply_module infrastructure/environments/prod/network
+          fix_network_state "prod" "brainmart-prod"
           apply_module infrastructure/environments/prod/network
           apply_module infrastructure/environments/prod/database
           apply_module infrastructure/environments/prod/storage
@@ -1109,17 +1178,33 @@ jobs:
         run: |
           apply_module() {
             local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
-            echo ">>> Refreshing state: $MODULE"
-            cd "$GITHUB_WORKSPACE/$MODULE"
-            # refresh-only: sync state with real AWS resources and regenerate outputs.
-            # Fixes stale outputs when outputs.tf was updated after the last apply.
-            terragrunt apply -refresh-only --terragrunt-non-interactive \
-              -lock=false -auto-approve >> "$LOG" 2>&1 || true
             echo ">>> Applying: $MODULE"
+            cd "$GITHUB_WORKSPACE/$MODULE"
             terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
-              >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
+          }
+
+          fix_network_state() {
+            local ENV=$1 PREFIX=$2
+            cd "$GITHUB_WORKSPACE/infrastructure/environments/${ENV}/network"
+            if terragrunt output -raw rds_security_group_id > /dev/null 2>&1; then
+              echo "network state OK: rds_security_group_id present"; return 0
+            fi
+            echo "WARNING: rds_security_group_id missing - checking AWS..."
+            SG_ID=$(aws ec2 describe-security-groups \
+              --filters "Name=group-name,Values=${PREFIX}-rds-sg" \
+              --region us-east-1 \
+              --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
+            if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
+              echo "Importing SG $SG_ID into state..."
+              terragrunt import --terragrunt-non-interactive -lock=false \
+                aws_security_group.rds "$SG_ID" > /tmp/tg-import-sg.log 2>&1 || true
+              cat /tmp/tg-import-sg.log
+            else
+              echo "SG not found in AWS - will be created by terraform apply"
+            fi
           }
           apply_module infrastructure/environments/prod/dr-eu-west-1/network
           apply_module infrastructure/environments/prod/dr-eu-west-1/database
