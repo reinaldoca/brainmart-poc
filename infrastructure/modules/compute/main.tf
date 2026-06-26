@@ -538,8 +538,9 @@ resource "aws_ecs_service" "app" {
   propagate_tags = "SERVICE"
 
   tags = merge(var.tags, {
-    Name    = "${var.name_prefix}-${var.service_name}"
-    Service = var.service_name
+    Name       = "${var.name_prefix}-${var.service_name}"
+    Service    = var.service_name
+    CostCenter = var.cost_center
   })
 
   depends_on = [

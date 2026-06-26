@@ -159,6 +159,9 @@ inputs = {
   audit_export_bucket     = "brainmart-dev-audit-logs"
   audit_export_schedule   = "rate(1 hour)"
 
+  # Cost center for billing and trial cost allocation
+  cost_center = "clinical-trials-dev"
+
   # ?? Deletion protection ??
   deletion_protection = false  # false en dev para poder destruir, true en prod
 

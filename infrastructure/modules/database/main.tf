@@ -392,10 +392,11 @@ resource "aws_db_instance" "main" {
   copy_tags_to_snapshot = true
 
   tags = merge(var.tags, {
-    Name              = "${var.name_prefix}-rds-postgres"
+    Name               = "${var.name_prefix}-rds-postgres"
     DataClassification = "PHI"
-    BackupRetention   = "${var.backup_retention_period}days"
-    ComplianceLevel   = "FDA-21CFR11-GCP-ALCOA"
+    BackupRetention    = "${var.backup_retention_period}days"
+    ComplianceLevel    = "FDA-21CFR11-GCP-ALCOA"
+    CostCenter         = var.cost_center
   })
 
   # Asegurar que el parameter group este? listo antes de la instancia
@@ -630,6 +631,7 @@ resource "aws_lambda_function" "audit_export" {
   tags = merge(var.tags, {
     Name    = "${var.name_prefix}-audit-log-export"
     Purpose = "ALCOA-AuditTrail"
+    CostCenter = var.cost_center
   })
 
   depends_on = [aws_iam_role_policy.audit_export_lambda]

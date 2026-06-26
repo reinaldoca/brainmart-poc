@@ -217,6 +217,12 @@ variable "lambda_code_signing_config_arn" {
   description = "ARN of Lambda code-signing config (CKV_AWS_272). Empty = skip for dev/POC."
 }
 
+variable "cost_center" {
+  description = "Cost center for billing allocation. Use clinical trial ID (e.g. 'trial-NCT-2024-001')."
+  type        = string
+  default     = "clinical-trials-platform"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

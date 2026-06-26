@@ -85,8 +85,9 @@ remote_state {
     # (connection strings, ARNs, etc.) ? DEBE estar cifrado
     encrypt = true
 
-    # KMS CMK para cifrar el estado: ma?s seguro que SSE-S3
-    # La llave fue creada por el mo?dulo de secrets en el primer deploy
+    # KMS CMK creada por infrastructure/bootstrap/main.tf (aws_kms_alias.tfstate).
+    # El bootstrap se ejecuta UNA VEZ antes del primer deploy via job bootstrap-infra.
+    # Ver: .github/workflows/ci-cd.yml -> job bootstrap-infra
     kms_key_id = "alias/brainmart-tfstate-key-${local.aws_region}"
 
     # Prevenir acceso pu?blico al bucket de estado (obligatorio)

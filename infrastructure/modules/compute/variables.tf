@@ -64,6 +64,12 @@ variable "enable_service_discovery" {
   default = true
 }
 
+variable "cost_center" {
+  description = "Cost center for billing allocation. Use clinical trial ID (e.g. 'trial-NCT-2024-001')."
+  type        = string
+  default     = "clinical-trials-platform"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

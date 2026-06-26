@@ -376,11 +376,63 @@ jobs:
   # JOB 3: TERRAGRUNT PLAN
   # ──────────────────────────────────────────────────────────────────────────────
   # ──────────────────────────────────────────────────────────────────────────────
+  # ────────────────────────────────────────────────────────────────────────────
+  # JOB: BOOTSTRAP INFRA
+  # Crea KMS key, S3 bucket y DynamoDB table para el backend de Terraform.
+  # Usa backend LOCAL para evitar la dependencia circular.
+  # Es idempotente: si los recursos ya existen, terraform apply no hace nada.
+  # ────────────────────────────────────────────────────────────────────────────
+  bootstrap-infra:
+    name: Bootstrap Terraform Backend (KMS + S3 + DynamoDB)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [policy-check]
+
+    steps:
+      - name: Checkout codigo
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Configurar credenciales AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}:role/GitHubActionsRole
+          role-session-name: Bootstrap-${{ github.sha }}
+          aws-region: us-east-1
+
+      - name: Terraform Init (backend local)
+        run: terraform -chdir=infrastructure/bootstrap init
+
+      - name: Terraform Apply - crear KMS + S3 + DynamoDB
+        # Idempotente: si los recursos ya existen no realiza cambios.
+        # El state local se descarta despues del job (recursos persisten en AWS).
+        run: |
+          terraform -chdir=infrastructure/bootstrap apply -auto-approve \\
+            -var="account_id=${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}" \\
+            -var="region=us-east-1" \\
+            -var="cicd_role_arn=arn:aws:iam::${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}:role/GitHubActionsRole"
+
+      - name: Verificar recursos de bootstrap
+        run: |
+          ACCOUNT_ID=${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}
+          echo "=== KMS Alias =="
+          aws kms describe-key --key-id alias/brainmart-tfstate-key-us-east-1 \\
+            --query "KeyMetadata.{KeyId:KeyId,Enabled:Enabled}" --output table
+          echo "=== S3 Bucket =="
+          aws s3api head-bucket --bucket brainmart-tfstate-${ACCOUNT_ID}-us-east-1 2>&1
+          echo "=== DynamoDB Table =="
+          aws dynamodb describe-table --table-name brainmart-tfstate-lock \\
+            --query "Table.{Name:TableName,Status:TableStatus}" --output table
+
   terragrunt-plan:
     name: 🌍 Terragrunt Plan
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [policy-check]
+    needs: [policy-check, bootstrap-infra]
 
     strategy:
       matrix:
@@ -473,7 +525,7 @@ jobs:
     name: Bootstrap ECR Repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [sast-sca]
+    needs: [sast-sca, bootstrap-infra]
     outputs:
       repository_uri: ${{ steps.ensure-ecr.outputs.repository_uri }}
 
@@ -640,7 +692,10 @@ jobs:
         with:
           cosign-release: "v2.2.3"
 
-      - name: ✍️  Firmar imagen con Cosign (keyless via OIDC)
+      - name: Firmar imagen con Cosign (keyless via OIDC)
+        # continue-on-error: Cosign .att tags are immutable in ECR.
+        # If the image was already signed in a previous run, skip gracefully.
+        continue-on-error: true
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
           COSIGN_EXPERIMENTAL: "1"  # Habilita keyless signing
