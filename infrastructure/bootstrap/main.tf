@@ -49,36 +49,12 @@ provider "aws" {
 resource "aws_kms_key" "tfstate" {
   description             = "KMS key for Terraform state encryption - ${var.region}"
   deletion_window_in_days = 30
-  enable_key_rotation     = true   # Rotación automática anual (best practice)
+  enable_key_rotation     = true
   multi_region            = false
 
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "EnableRootAccess"
-        Effect = "Allow"
-        Principal = {
-          AWS = "arn:aws:iam::${var.account_id}:root"
-        }
-        Action   = "kms:*"
-        Resource = "*"
-      },
-      {
-        Sid    = "AllowTerraformState"
-        Effect = "Allow"
-        Principal = {
-          AWS = var.cicd_role_arn
-        }
-        Action = [
-          "kms:GenerateDataKey",
-          "kms:Decrypt",
-          "kms:DescribeKey"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
+  # No custom policy: AWS applies the default key policy which grants
+  # full access to the account root (arn:aws:iam::ACCOUNT_ID:root).
+  # This avoids MalformedPolicyDocumentException during key creation.
 
   tags = {
     Name        = "brainmart-tfstate-key-${var.region}"

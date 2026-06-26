@@ -407,6 +407,36 @@ jobs:
       - name: Terraform Init (backend local)
         run: terraform -chdir=infrastructure/bootstrap init
 
+      - name: Importar recursos bootstrap existentes (idempotencia)
+        run: |
+          ACCOUNT_ID="${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}"
+          REGION="us-east-1"
+          BUCKET="brainmart-tfstate-${ACCOUNT_ID}-${REGION}"
+          TABLE="brainmart-tfstate-lock"
+          KMS_ALIAS="alias/brainmart-tfstate-key-${REGION}"
+          TF_DIR="infrastructure/bootstrap"
+          TF_VARS="-var=account_id=${ACCOUNT_ID} -var=region=${REGION} -var=cicd_role_arn=arn:aws:iam::${ACCOUNT_ID}:role/GitHubActionsRole"
+
+          run_import() { eval "terraform -chdir=${TF_DIR} import ${TF_VARS} $1 $2" 2>/dev/null || true; }
+
+          # S3 bucket
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "Importing S3 bucket $BUCKET"
+            run_import aws_s3_bucket.tfstate "$BUCKET"
+          fi
+          # DynamoDB table
+          if aws dynamodb describe-table --table-name "$TABLE" --region "$REGION" >/dev/null 2>&1; then
+            echo "Importing DynamoDB table $TABLE"
+            run_import aws_dynamodb_table.tfstate_lock "$TABLE"
+          fi
+          # KMS key + alias
+          if aws kms describe-key --key-id "$KMS_ALIAS" --region "$REGION" >/dev/null 2>&1; then
+            echo "Importing KMS alias $KMS_ALIAS"
+            KEY_ID=$(aws kms describe-key --key-id "$KMS_ALIAS" --region "$REGION" --query "KeyMetadata.KeyId" --output text)
+            run_import aws_kms_key.tfstate "$KEY_ID"
+            run_import aws_kms_alias.tfstate "$KMS_ALIAS"
+          fi
+
       - name: Terraform Apply - crear KMS + S3 + DynamoDB
         # Idempotente: si los recursos ya existen no realiza cambios.
         # El state local se descarta despues del job (recursos persisten en AWS).
