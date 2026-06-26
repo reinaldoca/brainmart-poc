@@ -878,12 +878,21 @@ jobs:
       - name: 🚀 Terragrunt Apply - DEV
         # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
-          cd infrastructure/environments/dev
-          terragrunt run-all apply \
-            --terragrunt-non-interactive \
-            -lock=false \
-            --terragrunt-parallelism 1 \
-            -auto-approve 2>&1
+          # Apply in dependency order: network → database → storage/compute
+          # Individual terragrunt apply avoids run-all broken pipe race condition
+          TF_FLAGS="--terragrunt-non-interactive -lock=false -auto-approve"
+
+          echo "=== Applying: network ==="
+          terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/dev/network
+
+          echo "=== Applying: database (depends on network) ==="
+          terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/dev/database
+
+          echo "=== Applying: storage (depends on database) ==="
+          terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/dev/storage
+
+          echo "=== Applying: compute (depends on network + database) ==="
+          terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/dev/compute
 
       - name: 🚀 Deploy microservicio a ECS (DEV)
         continue-on-error: true  # ECS cluster may not exist on first deploy
@@ -950,12 +959,11 @@ jobs:
       - name: 🚀 Terragrunt Apply - STAGING
         # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
-          cd infrastructure/environments/staging
-          terragrunt run-all apply \
-            --terragrunt-non-interactive \
-            -lock=false \
-            --terragrunt-parallelism 1 \
-            -auto-approve 2>&1
+          TF_FLAGS="--terragrunt-non-interactive -lock=false -auto-approve"
+          echo "=== Applying: network ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/staging/network
+          echo "=== Applying: database ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/staging/database
+          echo "=== Applying: storage ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/staging/storage
+          echo "=== Applying: compute ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/staging/compute
 
       - name: 🚀 Deploy microservicio a ECS (STAGING)
         run: |
@@ -1062,12 +1070,11 @@ jobs:
       - name: 🚀 Terragrunt Apply - PRODUCCION (us-east-1)
         # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
-          cd infrastructure/environments/prod
-          terragrunt run-all apply \
-            --terragrunt-non-interactive \
-            -lock=false \
-            --terragrunt-parallelism 1 \
-            -auto-approve 2>&1
+          TF_FLAGS="--terragrunt-non-interactive -lock=false -auto-approve"
+          echo "=== Applying: network ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/prod/network
+          echo "=== Applying: database ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/prod/database
+          echo "=== Applying: storage ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/prod/storage
+          echo "=== Applying: compute ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/prod/compute
 
       - name: 🚀 Terragrunt Apply - DR (eu-west-1)
         # continue-on-error removed: apply failure = infra in unknown state, must block
