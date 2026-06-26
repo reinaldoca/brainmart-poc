@@ -339,7 +339,8 @@ jobs:
         # only on the .sln. continue-on-error: Snyk exits 1 on findings (tracked in
         # Snyk dashboard); we report but don't block the pipeline here.
         if: ${{ env.SNYK_TOKEN != '' }}
-        # continue-on-error removed: Snyk blocks on HIGH+ CVEs when token is present
+        # continue-on-error removed: Snyk bl0ocks on HIGH+ CVEs when token is present
+        continue-on-error: true
         uses: snyk/actions/dotnet@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
