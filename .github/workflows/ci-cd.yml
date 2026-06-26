@@ -339,7 +339,7 @@ jobs:
         # only on the .sln. continue-on-error: Snyk exits 1 on findings (tracked in
         # Snyk dashboard); we report but don't block the pipeline here.
         if: ${{ env.SNYK_TOKEN != '' }}
-        continue-on-error: true
+        # continue-on-error removed: Snyk blocks on HIGH+ CVEs when token is present
         uses: snyk/actions/dotnet@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -352,7 +352,7 @@ jobs:
 
       - name: Snyk SCA (Angular dependencies)
         if: ${{ env.SNYK_TOKEN != '' }}
-        continue-on-error: true
+        # continue-on-error removed: Snyk blocks on HIGH+ CVEs when token is present
         uses: snyk/actions/node@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -514,7 +514,7 @@ jobs:
       - name: Terragrunt Init
         # continue-on-error: S3 backend bucket may not exist yet.
         # Pre-requisite: run scripts/bootstrap-tfstate.sh before first deploy.
-        continue-on-error: true
+        # continue-on-error removed: bootstrap-infra guarantees backend exists
         run: |
           cd infrastructure/environments/${{ matrix.environment }}
           terragrunt run-all init \
@@ -523,7 +523,7 @@ jobs:
 
       - name: Terragrunt Plan
         id: plan
-        continue-on-error: true
+        # continue-on-error removed: plan failure must block deploy
         run: |
           cd infrastructure/environments/${{ matrix.environment }}
           terragrunt run-all plan \
@@ -538,7 +538,8 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: OPA validation contra plan real
-        continue-on-error: true
+        # OPA blocks on DENY rules; warnings (like multi_az=false in dev) do not block
+        continue-on-error: false
         run: |
           cd infrastructure/environments/${{ matrix.environment }}
 
@@ -873,7 +874,7 @@ jobs:
           aws-region: us-east-1
 
       - name: 🚀 Terragrunt Apply - DEV
-        continue-on-error: true
+        # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
           cd infrastructure/environments/dev
           terragrunt run-all apply \
@@ -883,6 +884,7 @@ jobs:
             -auto-approve 2>&1
 
       - name: 🚀 Deploy microservicio a ECS (DEV)
+        continue-on-error: true  # ECS cluster may not exist on first deploy
         run: |
           # Actualizar la task definition de ECS con la nueva imagen
           aws ecs update-service \
@@ -944,7 +946,7 @@ jobs:
           aws-region: us-east-1
 
       - name: 🚀 Terragrunt Apply - STAGING
-        continue-on-error: true
+        # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
           cd infrastructure/environments/staging
           terragrunt run-all apply \
@@ -1056,7 +1058,7 @@ jobs:
           echo "✅ Firma Cosign verificada. La imagen proviene del pipeline de CI/CD."
 
       - name: 🚀 Terragrunt Apply - PRODUCCION (us-east-1)
-        continue-on-error: true
+        # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
           cd infrastructure/environments/prod
           terragrunt run-all apply \
@@ -1066,7 +1068,7 @@ jobs:
             -auto-approve 2>&1
 
       - name: 🚀 Terragrunt Apply - DR (eu-west-1)
-        continue-on-error: true
+        # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
           cd infrastructure/environments/prod/dr-eu-west-1
           terragrunt run-all apply \
