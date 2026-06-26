@@ -436,9 +436,11 @@ jobs:
             aws s3api create-bucket --bucket "$BUCKET" --region "$REGION"
             aws s3api put-bucket-versioning --bucket "$BUCKET" \
               --versioning-configuration Status=Enabled
+            cat > /tmp/sse.json << EOF
+            {"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"aws:kms","KMSMasterKeyID":"${KMS_ARN}"},"BucketKeyEnabled":true}]}
+            EOF
             aws s3api put-bucket-encryption --bucket "$BUCKET" \
-              --server-side-encryption-configuration \
-              "{'Rules':[{'ApplyServerSideEncryptionByDefault':{'SSEAlgorithm':'aws:kms','KMSMasterKeyID':'\$KMS_ARN'},'BucketKeyEnabled':true}]}"
+              --server-side-encryption-configuration file:///tmp/sse.json
             aws s3api put-public-access-block --bucket "$BUCKET" \
               --public-access-block-configuration \
               "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
