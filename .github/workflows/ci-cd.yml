@@ -878,22 +878,19 @@ jobs:
       - name: 🚀 Terragrunt Apply - DEV
         # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
-          # Apply in dependency order: network → database → storage/compute
-          # Individual terragrunt apply avoids run-all broken pipe race condition
-          TF_FLAGS="--terragrunt-non-interactive -lock=false -auto-approve"
-
-          echo "=== Applying: network ==="
-          terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/dev/network
-
-          echo "=== Applying: database (depends on network) ==="
-          terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/dev/database
-
-          echo "=== Applying: storage (depends on database) ==="
-          terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/dev/storage
-
-          echo "=== Applying: compute (depends on network + database) ==="
-          terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/dev/compute
-
+          apply_module() {
+            local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
+            echo ">>> Applying: $MODULE"
+            cd "$GITHUB_WORKSPACE/$MODULE"
+            terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
+              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+            cat "$LOG"
+            return $STATUS
+          }
+          apply_module infrastructure/environments/dev/network
+          apply_module infrastructure/environments/dev/database
+          apply_module infrastructure/environments/dev/storage
+          apply_module infrastructure/environments/dev/compute
       - name: 🚀 Deploy microservicio a ECS (DEV)
         continue-on-error: true  # ECS cluster may not exist on first deploy
         run: |
@@ -959,11 +956,19 @@ jobs:
       - name: 🚀 Terragrunt Apply - STAGING
         # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
-          TF_FLAGS="--terragrunt-non-interactive -lock=false -auto-approve"
-          echo "=== Applying: network ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/staging/network
-          echo "=== Applying: database ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/staging/database
-          echo "=== Applying: storage ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/staging/storage
-          echo "=== Applying: compute ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/staging/compute
+          apply_module() {
+            local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
+            echo ">>> Applying: $MODULE"
+            cd "$GITHUB_WORKSPACE/$MODULE"
+            terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
+              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+            cat "$LOG"
+            return $STATUS
+          }
+          apply_module infrastructure/environments/staging/network
+          apply_module infrastructure/environments/staging/database
+          apply_module infrastructure/environments/staging/storage
+          apply_module infrastructure/environments/staging/compute
 
       - name: 🚀 Deploy microservicio a ECS (STAGING)
         run: |
@@ -1070,21 +1075,36 @@ jobs:
       - name: 🚀 Terragrunt Apply - PRODUCCION (us-east-1)
         # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
-          TF_FLAGS="--terragrunt-non-interactive -lock=false -auto-approve"
-          echo "=== Applying: network ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/prod/network
-          echo "=== Applying: database ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/prod/database
-          echo "=== Applying: storage ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/prod/storage
-          echo "=== Applying: compute ===" && terragrunt apply $TF_FLAGS --terragrunt-working-dir infrastructure/environments/prod/compute
+          apply_module() {
+            local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
+            echo ">>> Applying: $MODULE"
+            cd "$GITHUB_WORKSPACE/$MODULE"
+            terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
+              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+            cat "$LOG"
+            return $STATUS
+          }
+          apply_module infrastructure/environments/prod/network
+          apply_module infrastructure/environments/prod/database
+          apply_module infrastructure/environments/prod/storage
+          apply_module infrastructure/environments/prod/compute
 
       - name: 🚀 Terragrunt Apply - DR (eu-west-1)
         # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
-          cd infrastructure/environments/prod/dr-eu-west-1
-          terragrunt run-all apply \
-            --terragrunt-non-interactive \
-            -lock=false \
-            -auto-approve 2>&1
-
+          apply_module() {
+            local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
+            echo ">>> Applying: $MODULE"
+            cd "$GITHUB_WORKSPACE/$MODULE"
+            terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
+              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+            cat "$LOG"
+            return $STATUS
+          }
+          apply_module infrastructure/environments/prod/dr-eu-west-1/network
+          apply_module infrastructure/environments/prod/dr-eu-west-1/database
+          apply_module infrastructure/environments/prod/dr-eu-west-1/storage
+          apply_module infrastructure/environments/prod/dr-eu-west-1/compute
       - name: 🚀 Deploy microservicio a ECS (PROD)
         run: |
           aws ecs update-service \
