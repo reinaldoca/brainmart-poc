@@ -146,6 +146,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "audit" {
     id     = "audit-log-archival"
     status = "Enabled"
 
+    # filter required by provider >= 4.x (empty filter = apply to all objects)
+    filter {}
+
     # CKV_AWS_300: Abort failed multipart uploads after 7 days
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
