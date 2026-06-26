@@ -411,21 +411,21 @@ jobs:
         # Idempotente: si los recursos ya existen no realiza cambios.
         # El state local se descarta despues del job (recursos persisten en AWS).
         run: |
-          terraform -chdir=infrastructure/bootstrap apply -auto-approve \\
-            -var="account_id=${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}" \\
-            -var="region=us-east-1" \\
+          terraform -chdir=infrastructure/bootstrap apply -auto-approve \
+            -var="account_id=${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}" \
+            -var="region=us-east-1" \
             -var="cicd_role_arn=arn:aws:iam::${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}:role/GitHubActionsRole"
 
       - name: Verificar recursos de bootstrap
         run: |
           ACCOUNT_ID=${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}
           echo "=== KMS Alias =="
-          aws kms describe-key --key-id alias/brainmart-tfstate-key-us-east-1 \\
+          aws kms describe-key --key-id alias/brainmart-tfstate-key-us-east-1 \
             --query "KeyMetadata.{KeyId:KeyId,Enabled:Enabled}" --output table
           echo "=== S3 Bucket =="
           aws s3api head-bucket --bucket brainmart-tfstate-${ACCOUNT_ID}-us-east-1 2>&1
           echo "=== DynamoDB Table =="
-          aws dynamodb describe-table --table-name brainmart-tfstate-lock \\
+          aws dynamodb describe-table --table-name brainmart-tfstate-lock \
             --query "Table.{Name:TableName,Status:TableStatus}" --output table
 
   terragrunt-plan:
