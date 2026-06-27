@@ -888,15 +888,18 @@ jobs:
             echo "=== [$MODULE_NAME] plan ==="
             cd "$MODULE_DIR"
 
-            # Step 1: terragrunt plan (resolves deps + generates tfvars in cache)
-            # Plan does NOT write to S3, so no broken-pipe during state write
-            TERRAGRUNT_LOG_LEVEL=error terragrunt plan \
+            # TERRAGRUNT_FORWARD_TF_STDOUT: makes Terragrunt attach Terraform's stdout
+            # directly to the parent process instead of creating an internal pipe.
+            # This eliminates the 64KB kernel pipe buffer that causes signal: broken pipe
+            # when Terraform generates >64KB output (refresh of 29+ resources).
+            TERRAGRUNT_FORWARD_TF_STDOUT=true \
+            TERRAGRUNT_LOG_LEVEL=error \
+            terragrunt plan \
               --terragrunt-non-interactive -lock=false \
               -out=tfplan.binary > "$LOG" 2>&1 || {
               echo "PLAN FAILED [$MODULE_NAME]:"; cat "$LOG"; return 1
             }
 
-            # Step 2: find the plan file Terragrunt wrote to its cache
             local PLAN_FILE CACHE_DIR
             PLAN_FILE=$(find "$MODULE_DIR/.terragrunt-cache" -name "tfplan.binary" \
               2>/dev/null | head -1)
@@ -905,11 +908,10 @@ jobs:
               cat "$LOG"; return 1
             fi
             CACHE_DIR=$(dirname "$PLAN_FILE")
-            echo "=== [$MODULE_NAME] apply (direct terraform, no Terragrunt pipe) ==="
+            echo "=== [$MODULE_NAME] apply (direct terraform, no pipe) ==="
 
-            # Step 3: apply directly with terraform — bypasses Terragrunt subprocess
-            # pipe management that causes signal: broken pipe on large state writes
-            terraform -chdir="$CACHE_DIR" apply -input=false \
+            # Apply directly with terraform — bypasses Terragrunt subprocess entirely
+            terraform -chdir="$CACHE_DIR" apply -input=false -lock=false \
               tfplan.binary >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
@@ -986,9 +988,68 @@ jobs:
               { echo "ERROR: S3 upload failed"; return 1; }
           }
 
+          # ── Import orphaned network resources (created in AWS by prior broken-pipe ────
+          # runs but missing from Terraform state). Must run BEFORE plan so plan
+          # sees them in state and doesn't try to recreate them.
+          import_orphaned_network() {
+            local ENV=$1 PREFIX=$2 VPC_ID=$3 REGION="us-east-1"
+            local NET_DIR="$GITHUB_WORKSPACE/infrastructure/environments/${ENV}/network"
+            local ACCOUNT_ID
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            local BUCKET="brainmart-tfstate-${ACCOUNT_ID}-${REGION}"
+            local STATE_KEY="environments/${ENV}/network/terraform.tfstate"
+
+            # Need the cache dir to run terragrunt import
+            cd "$NET_DIR"
+            local CACHE_DIR
+            CACHE_DIR=$(find .terragrunt-cache -name "*.tf" ! -name "backend.tf" \
+              ! -name "provider.tf" -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+            [ -z "$CACHE_DIR" ] && { echo "no cache for import, skipping"; return 0; }
+
+            # Download current state
+            aws s3 cp "s3://${BUCKET}/${STATE_KEY}" /tmp/net-imp.json 2>/dev/null || {
+              echo "no state in S3 yet"; return 0
+            }
+
+            # --- S3 VPC Endpoint ---
+            IN_STATE=$(jq -r '.resources[]? | select(.type=="aws_vpc_endpoint" and (.instances[]?.attributes.service_name // "") | test("s3")) | .instances[0].attributes.id // empty' /tmp/net-imp.json 2>/dev/null)
+            if [ -z "$IN_STATE" ] && [ -n "$VPC_ID" ]; then
+              VPCE_ID=$(aws ec2 describe-vpc-endpoints \
+                --filters "Name=vpc-id,Values=${VPC_ID}" \
+                         "Name=service-name,Values=com.amazonaws.${REGION}.s3" \
+                         "Name=vpc-endpoint-type,Values=Gateway" \
+                         "Name=vpc-endpoint-state,Values=available,pending" \
+                --query "VpcEndpoints[0].VpcEndpointId" --output text \
+                --region "$REGION" 2>/dev/null)
+              [ "$VPCE_ID" = "None" ] && VPCE_ID=""
+              if [ -n "$VPCE_ID" ]; then
+                echo "Importing orphaned S3 VPC endpoint ${VPCE_ID}..."
+                terraform -chdir="$CACHE_DIR" import -lock=false \
+                  'aws_vpc_endpoint.s3[0]' "$VPCE_ID" >> /tmp/tf-import-net.log 2>&1 || true
+                cat /tmp/tf-import-net.log
+              fi
+            fi
+
+            # --- Security Group RDS (handled by fix_network_state, skip here) ---
+          }
+
           # ── Apply network first, then verify outputs before continuing ──────────
+          # Pass 1: plan+apply to create all resources that don't exist yet
           apply_module infrastructure/environments/dev/network
+
+          # Get VPC ID for orphan detection
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=${PREFIX:-brainmart-dev}-vpc" \
+            --query "Vpcs[0].VpcId" --output text --region us-east-1 2>/dev/null)
+          [ "$VPC_ID" = "None" ] && VPC_ID=""
+
+          # Import any resources created in AWS by prior broken-pipe runs
+          import_orphaned_network "dev" "brainmart-dev" "$VPC_ID"
+
+          # Fix missing rds_security_group_id output
           fix_network_state "dev" "brainmart-dev"
+
+          # Pass 2: re-plan with complete state (no-op if everything imported)
           apply_module infrastructure/environments/dev/network
 
           apply_module infrastructure/environments/dev/database
@@ -1067,7 +1128,9 @@ jobs:
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
             echo "=== [$MODULE_NAME] plan ==="
             cd "$MODULE_DIR"
-            TERRAGRUNT_LOG_LEVEL=error terragrunt plan \
+            TERRAGRUNT_FORWARD_TF_STDOUT=true \
+            TERRAGRUNT_LOG_LEVEL=error \
+            terragrunt plan \
               --terragrunt-non-interactive -lock=false \
               -out=tfplan.binary > "$LOG" 2>&1 || {
               echo "PLAN FAILED [$MODULE_NAME]:"; cat "$LOG"; return 1
@@ -1081,7 +1144,7 @@ jobs:
             fi
             CACHE_DIR=$(dirname "$PLAN_FILE")
             echo "=== [$MODULE_NAME] apply (direct terraform) ==="
-            terraform -chdir="$CACHE_DIR" apply -input=false \
+            terraform -chdir="$CACHE_DIR" apply -input=false -lock=false \
               tfplan.binary >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
@@ -1232,7 +1295,9 @@ jobs:
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
             echo "=== [$MODULE_NAME] plan ==="
             cd "$MODULE_DIR"
-            TERRAGRUNT_LOG_LEVEL=error terragrunt plan \
+            TERRAGRUNT_FORWARD_TF_STDOUT=true \
+            TERRAGRUNT_LOG_LEVEL=error \
+            terragrunt plan \
               --terragrunt-non-interactive -lock=false \
               -out=tfplan.binary > "$LOG" 2>&1 || {
               echo "PLAN FAILED [$MODULE_NAME]:"; cat "$LOG"; return 1
@@ -1246,7 +1311,7 @@ jobs:
             fi
             CACHE_DIR=$(dirname "$PLAN_FILE")
             echo "=== [$MODULE_NAME] apply (direct terraform) ==="
-            terraform -chdir="$CACHE_DIR" apply -input=false \
+            terraform -chdir="$CACHE_DIR" apply -input=false -lock=false \
               tfplan.binary >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
@@ -1295,7 +1360,9 @@ jobs:
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
             echo "=== [$MODULE_NAME] plan ==="
             cd "$MODULE_DIR"
-            TERRAGRUNT_LOG_LEVEL=error terragrunt plan \
+            TERRAGRUNT_FORWARD_TF_STDOUT=true \
+            TERRAGRUNT_LOG_LEVEL=error \
+            terragrunt plan \
               --terragrunt-non-interactive -lock=false \
               -out=tfplan.binary > "$LOG" 2>&1 || {
               echo "PLAN FAILED [$MODULE_NAME]:"; cat "$LOG"; return 1
@@ -1309,7 +1376,7 @@ jobs:
             fi
             CACHE_DIR=$(dirname "$PLAN_FILE")
             echo "=== [$MODULE_NAME] apply (direct terraform) ==="
-            terraform -chdir="$CACHE_DIR" apply -input=false \
+            terraform -chdir="$CACHE_DIR" apply -input=false -lock=false \
               tfplan.binary >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
