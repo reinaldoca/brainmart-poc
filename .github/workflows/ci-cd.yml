@@ -880,11 +880,37 @@ jobs:
         run: |
           # ── Helper: apply with file-redirect to avoid SIGPIPE ─────────────────
           apply_module() {
-            local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
-            echo ">>> Applying: $MODULE"
-            cd "$GITHUB_WORKSPACE/$MODULE"
-            terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
-              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+            local MODULE=$1
+            local MODULE_NAME="${MODULE##*/}"
+            local LOG="/tmp/tf-${MODULE_NAME}.log"
+            local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
+
+            echo "=== [$MODULE_NAME] plan ==="
+            cd "$MODULE_DIR"
+
+            # Step 1: terragrunt plan (resolves deps + generates tfvars in cache)
+            # Plan does NOT write to S3, so no broken-pipe during state write
+            TERRAGRUNT_LOG_LEVEL=error terragrunt plan \
+              --terragrunt-non-interactive -lock=false \
+              -out=tfplan.binary > "$LOG" 2>&1 || {
+              echo "PLAN FAILED [$MODULE_NAME]:"; cat "$LOG"; return 1
+            }
+
+            # Step 2: find the plan file Terragrunt wrote to its cache
+            local PLAN_FILE CACHE_DIR
+            PLAN_FILE=$(find "$MODULE_DIR/.terragrunt-cache" -name "tfplan.binary" \
+              2>/dev/null | head -1)
+            if [ -z "$PLAN_FILE" ]; then
+              echo "ERROR: plan file not found in .terragrunt-cache"
+              cat "$LOG"; return 1
+            fi
+            CACHE_DIR=$(dirname "$PLAN_FILE")
+            echo "=== [$MODULE_NAME] apply (direct terraform, no Terragrunt pipe) ==="
+
+            # Step 3: apply directly with terraform — bypasses Terragrunt subprocess
+            # pipe management that causes signal: broken pipe on large state writes
+            terraform -chdir="$CACHE_DIR" apply -input=false \
+              tfplan.binary >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
           }
@@ -1035,11 +1061,28 @@ jobs:
         # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
           apply_module() {
-            local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
-            echo ">>> Applying: $MODULE"
-            cd "$GITHUB_WORKSPACE/$MODULE"
-            terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
-              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+            local MODULE=$1
+            local MODULE_NAME="${MODULE##*/}"
+            local LOG="/tmp/tf-${MODULE_NAME}.log"
+            local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
+            echo "=== [$MODULE_NAME] plan ==="
+            cd "$MODULE_DIR"
+            TERRAGRUNT_LOG_LEVEL=error terragrunt plan \
+              --terragrunt-non-interactive -lock=false \
+              -out=tfplan.binary > "$LOG" 2>&1 || {
+              echo "PLAN FAILED [$MODULE_NAME]:"; cat "$LOG"; return 1
+            }
+            local PLAN_FILE CACHE_DIR
+            PLAN_FILE=$(find "$MODULE_DIR/.terragrunt-cache" -name "tfplan.binary" \
+              2>/dev/null | head -1)
+            if [ -z "$PLAN_FILE" ]; then
+              echo "ERROR: plan file not found in .terragrunt-cache"
+              cat "$LOG"; return 1
+            fi
+            CACHE_DIR=$(dirname "$PLAN_FILE")
+            echo "=== [$MODULE_NAME] apply (direct terraform) ==="
+            terraform -chdir="$CACHE_DIR" apply -input=false \
+              tfplan.binary >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
           }
@@ -1183,11 +1226,28 @@ jobs:
         # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
           apply_module() {
-            local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
-            echo ">>> Applying: $MODULE"
-            cd "$GITHUB_WORKSPACE/$MODULE"
-            terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
-              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+            local MODULE=$1
+            local MODULE_NAME="${MODULE##*/}"
+            local LOG="/tmp/tf-${MODULE_NAME}.log"
+            local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
+            echo "=== [$MODULE_NAME] plan ==="
+            cd "$MODULE_DIR"
+            TERRAGRUNT_LOG_LEVEL=error terragrunt plan \
+              --terragrunt-non-interactive -lock=false \
+              -out=tfplan.binary > "$LOG" 2>&1 || {
+              echo "PLAN FAILED [$MODULE_NAME]:"; cat "$LOG"; return 1
+            }
+            local PLAN_FILE CACHE_DIR
+            PLAN_FILE=$(find "$MODULE_DIR/.terragrunt-cache" -name "tfplan.binary" \
+              2>/dev/null | head -1)
+            if [ -z "$PLAN_FILE" ]; then
+              echo "ERROR: plan file not found in .terragrunt-cache"
+              cat "$LOG"; return 1
+            fi
+            CACHE_DIR=$(dirname "$PLAN_FILE")
+            echo "=== [$MODULE_NAME] apply (direct terraform) ==="
+            terraform -chdir="$CACHE_DIR" apply -input=false \
+              tfplan.binary >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
           }
@@ -1229,11 +1289,28 @@ jobs:
         # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
           apply_module() {
-            local MODULE=$1 LOG="/tmp/tg-apply-${MODULE##*/}.log"
-            echo ">>> Applying: $MODULE"
-            cd "$GITHUB_WORKSPACE/$MODULE"
-            terragrunt apply --terragrunt-non-interactive -lock=false -auto-approve \
-              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+            local MODULE=$1
+            local MODULE_NAME="${MODULE##*/}"
+            local LOG="/tmp/tf-${MODULE_NAME}.log"
+            local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
+            echo "=== [$MODULE_NAME] plan ==="
+            cd "$MODULE_DIR"
+            TERRAGRUNT_LOG_LEVEL=error terragrunt plan \
+              --terragrunt-non-interactive -lock=false \
+              -out=tfplan.binary > "$LOG" 2>&1 || {
+              echo "PLAN FAILED [$MODULE_NAME]:"; cat "$LOG"; return 1
+            }
+            local PLAN_FILE CACHE_DIR
+            PLAN_FILE=$(find "$MODULE_DIR/.terragrunt-cache" -name "tfplan.binary" \
+              2>/dev/null | head -1)
+            if [ -z "$PLAN_FILE" ]; then
+              echo "ERROR: plan file not found in .terragrunt-cache"
+              cat "$LOG"; return 1
+            fi
+            CACHE_DIR=$(dirname "$PLAN_FILE")
+            echo "=== [$MODULE_NAME] apply (direct terraform) ==="
+            terraform -chdir="$CACHE_DIR" apply -input=false \
+              tfplan.binary >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
             return $STATUS
           }
