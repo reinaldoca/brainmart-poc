@@ -889,35 +889,75 @@ jobs:
             return $STATUS
           }
 
-          # ── Fix: import SG into state if missing (broken-pipe state corruption) ─
+          # ── Fix: patch S3 state if rds_security_group_id output is missing ──────
+          # Root cause: state was saved before rds_security_group_id existed in outputs.tf
+          # or state save was interrupted by broken pipe. Fix: read state from S3 directly,
+          # find the SG resource or import from AWS, then patch the outputs section.
           fix_network_state() {
-            local ENV=$1 PREFIX=$2
-            local NET_DIR="$GITHUB_WORKSPACE/infrastructure/environments/${ENV}/network"
-            cd "$NET_DIR"
+            local ENV=$1 PREFIX=$2 REGION="us-east-1"
+            local ACCOUNT_ID
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            local BUCKET="brainmart-tfstate-${ACCOUNT_ID}-${REGION}"
+            local STATE_KEY="environments/${ENV}/network/terraform.tfstate"
 
-            # Check if rds_security_group_id is already in state
-            if terragrunt output -raw rds_security_group_id > /dev/null 2>&1; then
-              echo "network state OK: rds_security_group_id present"
+            echo "Checking s3://${BUCKET}/${STATE_KEY} for rds_security_group_id..."
+
+            # Download state directly from S3 (no terragrunt init needed)
+            if ! aws s3 cp "s3://${BUCKET}/${STATE_KEY}" /tmp/net-state.json 2>/dev/null; then
+              echo "State not in S3 yet. terraform apply will create it."
               return 0
             fi
 
-            echo "WARNING: rds_security_group_id missing from network state. Attempting recovery..."
-
-            # Find the SG in AWS by name tag
-            SG_ID=$(aws ec2 describe-security-groups \
-              --filters "Name=group-name,Values=${PREFIX}-rds-sg" \
-              --region us-east-1 \
-              --query "SecurityGroups[0].GroupId" \
-              --output text 2>/dev/null)
-
-            if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
-              echo "Found SG in AWS: $SG_ID — importing into state..."
-              terragrunt import --terragrunt-non-interactive -lock=false \
-                aws_security_group.rds "$SG_ID" > /tmp/tg-import-sg.log 2>&1 || true
-              cat /tmp/tg-import-sg.log
-            else
-              echo "SG not found in AWS — will be created by terraform apply"
+            # Check if output already present
+            if jq -e '.outputs.rds_security_group_id.value' /tmp/net-state.json > /dev/null 2>&1; then
+              SG_EXISTING=$(jq -r '.outputs.rds_security_group_id.value' /tmp/net-state.json)
+              echo "OK: rds_security_group_id=${SG_EXISTING} already in state."
+              return 0
             fi
+
+            echo "OUTPUT MISSING. Checking state resources for aws_security_group.rds..."
+            SG_ID=$(jq -r '
+              .resources[]? |
+              select(.type == "aws_security_group" and .name == "rds") |
+              .instances[0]?.attributes.id // empty
+            ' /tmp/net-state.json 2>/dev/null)
+
+            if [ -z "$SG_ID" ]; then
+              echo "SG not in state resources. Looking in AWS by name..."
+              SG_ID=$(aws ec2 describe-security-groups \
+                --filters "Name=group-name,Values=${PREFIX}-rds-sg" \
+                --region "$REGION" \
+                --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
+              [ "$SG_ID" = "None" ] && SG_ID=""
+
+              if [ -z "$SG_ID" ]; then
+                echo "SG not in AWS yet. terraform apply will create it cleanly."
+                return 0
+              fi
+              echo "SG ${SG_ID} exists in AWS but not in state. Deleting stale resource..."
+              # Delete SG from AWS so Terraform can create it cleanly (SG has no ENIs yet)
+              aws ec2 delete-security-group --group-id "$SG_ID" --region "$REGION" 2>/dev/null && \
+                echo "SG deleted. terraform apply will recreate it." || \
+                echo "Could not delete SG (may have dependencies). terraform import will handle it."
+              return 0
+            fi
+
+            # SG IS in state resources but output section is stale — patch the state JSON
+            echo "SG ${SG_ID} in state resources. Patching outputs section directly..."
+            SERIAL=$(jq '.serial' /tmp/net-state.json)
+            jq --arg sg "$SG_ID" --argjson s "$((SERIAL + 1))" '
+              .serial = $s |
+              .outputs.rds_security_group_id = {"value": $sg, "type": "string"}
+            ' /tmp/net-state.json > /tmp/net-state-patched.json
+
+            if ! jq -e '.outputs.rds_security_group_id.value' /tmp/net-state-patched.json > /dev/null 2>&1; then
+              echo "ERROR: state patch validation failed. Aborting patch."; return 1
+            fi
+
+            echo "Uploading patched state to s3://${BUCKET}/${STATE_KEY}..."
+            aws s3 cp /tmp/net-state-patched.json "s3://${BUCKET}/${STATE_KEY}" --sse aws:kms && \
+              echo "State patched: rds_security_group_id=${SG_ID}" || \
+              { echo "ERROR: S3 upload failed"; return 1; }
           }
 
           # ── Apply network first, then verify outputs before continuing ──────────
@@ -1005,24 +1045,30 @@ jobs:
           }
 
           fix_network_state() {
-            local ENV=$1 PREFIX=$2
-            cd "$GITHUB_WORKSPACE/infrastructure/environments/${ENV}/network"
-            if terragrunt output -raw rds_security_group_id > /dev/null 2>&1; then
-              echo "network state OK: rds_security_group_id present"; return 0
+            local ENV=$1 PREFIX=$2 REGION="us-east-1"
+            local ACCOUNT_ID
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            local BUCKET="brainmart-tfstate-${ACCOUNT_ID}-${REGION}"
+            local STATE_KEY="environments/${ENV}/network/terraform.tfstate"
+            echo "Checking s3://${BUCKET}/${STATE_KEY}..."
+            if ! aws s3 cp "s3://${BUCKET}/${STATE_KEY}" /tmp/net-state.json 2>/dev/null; then
+              echo "State not in S3 yet."; return 0
             fi
-            echo "WARNING: rds_security_group_id missing - checking AWS..."
-            SG_ID=$(aws ec2 describe-security-groups \
-              --filters "Name=group-name,Values=${PREFIX}-rds-sg" \
-              --region us-east-1 \
-              --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
-            if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
-              echo "Importing SG $SG_ID into state..."
-              terragrunt import --terragrunt-non-interactive -lock=false \
-                aws_security_group.rds "$SG_ID" > /tmp/tg-import-sg.log 2>&1 || true
-              cat /tmp/tg-import-sg.log
-            else
-              echo "SG not found in AWS - will be created by terraform apply"
+            if jq -e '.outputs.rds_security_group_id.value' /tmp/net-state.json > /dev/null 2>&1; then
+              echo "OK: rds_security_group_id=$(jq -r '.outputs.rds_security_group_id.value' /tmp/net-state.json)"; return 0
             fi
+            SG_ID=$(jq -r '.resources[]? | select(.type=="aws_security_group" and .name=="rds") | .instances[0]?.attributes.id // empty' /tmp/net-state.json 2>/dev/null)
+            if [ -z "$SG_ID" ]; then
+              SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=${PREFIX}-rds-sg" --region "$REGION" --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
+              [ "$SG_ID" = "None" ] && SG_ID=""
+              if [ -n "$SG_ID" ]; then
+                aws ec2 delete-security-group --group-id "$SG_ID" --region "$REGION" 2>/dev/null || true
+              fi
+              return 0
+            fi
+            SERIAL=$(jq '.serial' /tmp/net-state.json)
+            jq --arg sg "$SG_ID" --argjson s "$((SERIAL + 1))" '.serial=$s | .outputs.rds_security_group_id={"value":$sg,"type":"string"}' /tmp/net-state.json > /tmp/net-patched.json
+            aws s3 cp /tmp/net-patched.json "s3://${BUCKET}/${STATE_KEY}" --sse aws:kms && echo "Patched: rds_security_group_id=${SG_ID}"
           }
           apply_module infrastructure/environments/staging/network
           fix_network_state "staging" "brainmart-staging"
@@ -1147,24 +1193,30 @@ jobs:
           }
 
           fix_network_state() {
-            local ENV=$1 PREFIX=$2
-            cd "$GITHUB_WORKSPACE/infrastructure/environments/${ENV}/network"
-            if terragrunt output -raw rds_security_group_id > /dev/null 2>&1; then
-              echo "network state OK: rds_security_group_id present"; return 0
+            local ENV=$1 PREFIX=$2 REGION="us-east-1"
+            local ACCOUNT_ID
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            local BUCKET="brainmart-tfstate-${ACCOUNT_ID}-${REGION}"
+            local STATE_KEY="environments/${ENV}/network/terraform.tfstate"
+            echo "Checking s3://${BUCKET}/${STATE_KEY}..."
+            if ! aws s3 cp "s3://${BUCKET}/${STATE_KEY}" /tmp/net-state.json 2>/dev/null; then
+              echo "State not in S3 yet."; return 0
             fi
-            echo "WARNING: rds_security_group_id missing - checking AWS..."
-            SG_ID=$(aws ec2 describe-security-groups \
-              --filters "Name=group-name,Values=${PREFIX}-rds-sg" \
-              --region us-east-1 \
-              --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
-            if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
-              echo "Importing SG $SG_ID into state..."
-              terragrunt import --terragrunt-non-interactive -lock=false \
-                aws_security_group.rds "$SG_ID" > /tmp/tg-import-sg.log 2>&1 || true
-              cat /tmp/tg-import-sg.log
-            else
-              echo "SG not found in AWS - will be created by terraform apply"
+            if jq -e '.outputs.rds_security_group_id.value' /tmp/net-state.json > /dev/null 2>&1; then
+              echo "OK: rds_security_group_id=$(jq -r '.outputs.rds_security_group_id.value' /tmp/net-state.json)"; return 0
             fi
+            SG_ID=$(jq -r '.resources[]? | select(.type=="aws_security_group" and .name=="rds") | .instances[0]?.attributes.id // empty' /tmp/net-state.json 2>/dev/null)
+            if [ -z "$SG_ID" ]; then
+              SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=${PREFIX}-rds-sg" --region "$REGION" --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
+              [ "$SG_ID" = "None" ] && SG_ID=""
+              if [ -n "$SG_ID" ]; then
+                aws ec2 delete-security-group --group-id "$SG_ID" --region "$REGION" 2>/dev/null || true
+              fi
+              return 0
+            fi
+            SERIAL=$(jq '.serial' /tmp/net-state.json)
+            jq --arg sg "$SG_ID" --argjson s "$((SERIAL + 1))" '.serial=$s | .outputs.rds_security_group_id={"value":$sg,"type":"string"}' /tmp/net-state.json > /tmp/net-patched.json
+            aws s3 cp /tmp/net-patched.json "s3://${BUCKET}/${STATE_KEY}" --sse aws:kms && echo "Patched: rds_security_group_id=${SG_ID}"
           }
           apply_module infrastructure/environments/prod/network
           fix_network_state "prod" "brainmart-prod"
