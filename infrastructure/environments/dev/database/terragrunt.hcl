@@ -23,28 +23,45 @@ include "root" {
   expose = true
 }
 
-# ?? Mo?dulo de base de datos ??
+# Lookup directo del SG desde AWS.
+# Se evalua al parsear el HCL, ANTES de que Terraform corra.
+# Si el network apply ya corrio y creo el SG, devuelve el ID real.
+# Si el SG aun no existe, devuelve el placeholder; el apply fallara
+# gracefully hasta que network este completo.
+locals {
+  _sg_raw      = run_cmd("--terragrunt-quiet", "sh", "-c",
+    "aws ec2 describe-security-groups --filters 'Name=group-name,Values=brainmart-dev-rds-sg' --region us-east-1 --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo ''")
+  rds_sg_fallback = trimspace(local._sg_raw) != "" && trimspace(local._sg_raw) != "None" ? trimspace(local._sg_raw) : "sg-00000000000000001"
+}
+
+# ?? Modulo de base de datos ??
 terraform {
   source = "../../../modules//database"
 }
 
 # ?? Dependencia de red: necesitamos VPC ID y subnet IDs ??
-# Terragrunt espera a que el mo?dulo de red termine antes de planificar este
-# y automa?ticamente pasa los outputs como variables de entrada
 dependency "network" {
   config_path = "../network"
 
-  # Mock outputs para poder hacer plan sin que network este? desplegado
-  # U?til en CI/CD para validar la sintaxis antes del primer deploy
-  mock_outputs = {
-    vpc_id                  = "vpc-00000000000000000"
-    isolated_subnet_ids     = ["subnet-00000000000000001", "subnet-00000000000000002"]
-    private_subnet_ids      = ["subnet-00000000000000003", "subnet-00000000000000004"]
-    vpc_cidr_block          = "10.10.0.0/16"
-    db_subnet_group_name    = "brainmart-dev-db-subnet-group"
-    rds_security_group_id   = "sg-00000000000000001"
-  }
+  # mock_outputs_merge_strategy_with_state = "shallow":
+  #   Cuando el state de network EXISTE pero le falta rds_security_group_id
+  #   (p.ej. el output se aniadio a outputs.tf despues del primer deploy, o el
+  #   state write fallo por broken-pipe), Terragrunt usa el valor real donde
+  #   exista y el mock SOLO para los outputs faltantes.
+  #   Sin esta linea el default es "no_merge": usa TODOS los reales o TODOS los
+  #   mocks, lo que causa "Unsupported attribute" cuando falta un output real.
+  mock_outputs_merge_strategy_with_state = "shallow"
   mock_outputs_allowed_terraform_commands = ["validate", "plan", "init", "apply"]
+
+  mock_outputs = {
+    vpc_id               = "vpc-00000000000000000"
+    isolated_subnet_ids  = ["subnet-00000000000000001", "subnet-00000000000000002"]
+    private_subnet_ids   = ["subnet-00000000000000003", "subnet-00000000000000004"]
+    vpc_cidr_block       = "10.10.0.0/16"
+    db_subnet_group_name = "brainmart-dev-db-subnet-group"
+    # Usa el SG real de AWS si existe; placeholder solo en primer deploy
+    rds_security_group_id = local.rds_sg_fallback
+  }
 }
 
 inputs = {

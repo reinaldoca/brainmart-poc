@@ -10,21 +10,28 @@ include "root" {
   expose = true
 }
 
+locals {
+  _sg_raw     = run_cmd("--terragrunt-quiet", "sh", "-c",
+    "aws ec2 describe-security-groups --filters 'Name=group-name,Values=brainmart-prod-rds-sg' --region us-east-1 --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo ''")
+  rds_sg_fallback = trimspace(local._sg_raw) != "" && trimspace(local._sg_raw) != "None" ? trimspace(local._sg_raw) : "sg-00000000000000001"
+}
+
 terraform {
   source = "../../../../modules//database"
 }
 
 dependency "network" {
   config_path = "../network"
+  mock_outputs_merge_strategy_with_state  = "shallow"
+  mock_outputs_allowed_terraform_commands = ["validate", "plan", "init", "apply"]
   mock_outputs = {
     vpc_id                = "vpc-00000000000000000"
     isolated_subnet_ids   = ["subnet-00000000000000001", "subnet-00000000000000002", "subnet-00000000000000003"]
     private_subnet_ids    = ["subnet-00000000000000004", "subnet-00000000000000005", "subnet-00000000000000006"]
-    rds_security_group_id = "sg-00000000000000001"
+    rds_security_group_id = local.rds_sg_fallback
     db_subnet_group_name  = "brainmart-prod-db-subnet-group"
     vpc_cidr_block        = "10.30.0.0/16"
   }
-  mock_outputs_allowed_terraform_commands = ["validate", "plan", "init", "apply"]
 }
 
 inputs = {
