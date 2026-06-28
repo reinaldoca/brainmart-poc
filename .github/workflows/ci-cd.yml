@@ -880,32 +880,19 @@ jobs:
           apply_module() {
             local MODULE=$1
             local MODULE_NAME="${MODULE##*/}"
-            local LOG="/tmp/tf-${MODULE_NAME}.log"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
-
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
-
-            # TERRAGRUNT_FORWARD_TF_STDOUT: attaches Terraform stdout directly to
-            # the parent fd, eliminating the 64KB pipe buffer (broken-pipe fix).
-            # 'apply -auto-approve' instead of 'plan + terraform apply' also avoids
-            # the exit-code-2 trap: 'terragrunt plan' exits 2 when changes exist,
-            # which bash || wrongly treats as failure.
+            # Output goes directly to the runner log (no intermediate file, no pipe).
+            # FORWARD_TF_STDOUT eliminates Terragrunt's internal pipe to Terraform
+            # (prevents broken-pipe on large refresh output, 29+ resources).
+            # set -e is active: any non-zero exit stops the pipeline immediately
+            # with the real error visible in the GitHub Actions log.
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_LOG_LEVEL=error \
             terragrunt apply \
               -auto-approve \
-              -lock=false \
-              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
-
-            cat "$LOG"
-
-            if [ $STATUS -ne 0 ]; then
-              echo "--- APPLY ERRORS ---"
-              grep -iE "(^Error:|Error creating|Error deleting|Error modifying|exit status)" "$LOG" | head -20 || true
-              echo "--- END APPLY ERRORS ---"
-              return $STATUS
-            fi
+              -lock=false
           }
 
           # ── Fix: patch S3 state if rds_security_group_id output is missing ──────
@@ -1098,34 +1085,58 @@ jobs:
           # 2. import orphaned resources (exist in AWS, missing from state after broken-pipe)
           # 3. fix missing outputs in state
           # 4. apply  → with state already up to date, plan = 0 or very few resources
-          # -- DEV network deploy --------------------------------------------------
-          # terragrunt apply internally runs 'terraform init' first, creating
-          # .terragrunt-cache.  If apply fails (orphaned resource already exists in
-          # AWS from a prior broken-pipe run), the cache IS there for terraform import.
-          # Pattern: attempt -> on failure, import orphaned + fix state -> retry once.
-          # ------------------------------------------------------------------------
-          apply_module infrastructure/environments/dev/network || NETWORK_RETRY=1
+          # -- DEV: pre-flight cleanup (orphaned resources not in state) -------
+          # aws_flow_log.main[0] is orphaned when it exists in AWS from a prior
+          # broken-pipe run but is absent from Terraform state.  Terraform tries
+          # to create it, AWS returns 'FlowLogAlreadyExists', apply fails.
+          # Fix: detect + DELETE before apply so Terraform recreates it cleanly.
+          # set -e is active: any failure stops the pipeline immediately.
+          # --------------------------------------------------------------------
+          echo "=== [preflight] checking for orphaned network resources ==="
 
-          if [ "${NETWORK_RETRY:-0}" = "1" ]; then
-            echo "=== [network] first attempt failed - scanning for orphaned resources ==="
+          _ACCT=$(aws sts get-caller-identity --query Account --output text)
+          _BKT="brainmart-tfstate-${_ACCT}-us-east-1"
 
-            # VPC already exists if apply partially ran (or from a prior run)
-            VPC_ID=$(aws ec2 describe-vpcs \
-              --filters "Name=tag:Name,Values=brainmart-dev-vpc" \
-              --query "Vpcs[0].VpcId" --output text --region us-east-1 2>/dev/null)
-            [ "$VPC_ID" = "None" ] && VPC_ID=""
-            echo "[network] VPC_ID=${VPC_ID:-<not yet created>}"
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=brainmart-dev-vpc" \
+            --query "Vpcs[0].VpcId" --output text --region us-east-1 2>/dev/null)
+          [ "$VPC_ID" = "None" ] && VPC_ID=""
+          echo "[preflight] VPC_ID=${VPC_ID:-<not created yet>}"
 
-            # .terragrunt-cache was created by the failed apply - use it for imports
-            import_orphaned_network "dev" "brainmart-dev" "$VPC_ID"
+          if [ -n "$VPC_ID" ]; then
+            aws s3 cp "s3://${_BKT}/environments/dev/network/terraform.tfstate" \
+              /tmp/net-preflight.json 2>/dev/null \
+              || printf '{"resources":[]}' > /tmp/net-preflight.json
 
-            # Patch any missing outputs in S3 state
-            fix_network_state "dev" "brainmart-dev"
+            # Flow log: delete from AWS if it exists there but not in state
+            FL_STATE=$(jq -r '.resources[]? | select(.type=="aws_flow_log" and .name=="main") | .instances[0].attributes.id // empty' \
+              /tmp/net-preflight.json 2>/dev/null)
 
-            echo "=== [network] retrying apply after imports ==="
-            apply_module infrastructure/environments/dev/network
+            if [ -z "$FL_STATE" ]; then
+              FL_AWS=$(aws ec2 describe-flow-logs \
+                --filter "Name=resource-id,Values=${VPC_ID}" \
+                         "Name=log-destination-type,Values=cloud-watch-logs" \
+                --query  "FlowLogs[0].FlowLogId" --output text \
+                --region us-east-1 2>/dev/null)
+              [ "$FL_AWS" = "None" ] && FL_AWS=""
+
+              if [ -n "$FL_AWS" ]; then
+                echo "[preflight] Orphaned flow log ${FL_AWS} (in AWS, not in state). Deleting..."
+                aws ec2 delete-flow-logs --flow-log-ids "$FL_AWS" --region us-east-1
+                echo "[preflight] Flow log deleted. Terraform will recreate it."
+              else
+                echo "[preflight] No orphaned flow log. OK."
+              fi
+            else
+              echo "[preflight] Flow log ${FL_STATE} already in state. OK."
+            fi
           fi
 
+          # Fix missing outputs in S3 state (e.g. rds_security_group_id)
+          fix_network_state "dev" "brainmart-dev"
+
+          # Apply all DEV modules - set -e stops pipeline on first failure
+          apply_module infrastructure/environments/dev/network
           apply_module infrastructure/environments/dev/database
           apply_module infrastructure/environments/dev/storage
           apply_module infrastructure/environments/dev/compute
@@ -1198,32 +1209,19 @@ jobs:
           apply_module() {
             local MODULE=$1
             local MODULE_NAME="${MODULE##*/}"
-            local LOG="/tmp/tf-${MODULE_NAME}.log"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
-
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
-
-            # TERRAGRUNT_FORWARD_TF_STDOUT: attaches Terraform stdout directly to
-            # the parent fd, eliminating the 64KB pipe buffer (broken-pipe fix).
-            # 'apply -auto-approve' instead of 'plan + terraform apply' also avoids
-            # the exit-code-2 trap: 'terragrunt plan' exits 2 when changes exist,
-            # which bash || wrongly treats as failure.
+            # Output goes directly to the runner log (no intermediate file, no pipe).
+            # FORWARD_TF_STDOUT eliminates Terragrunt's internal pipe to Terraform
+            # (prevents broken-pipe on large refresh output, 29+ resources).
+            # set -e is active: any non-zero exit stops the pipeline immediately
+            # with the real error visible in the GitHub Actions log.
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_LOG_LEVEL=error \
             terragrunt apply \
               -auto-approve \
-              -lock=false \
-              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
-
-            cat "$LOG"
-
-            if [ $STATUS -ne 0 ]; then
-              echo "--- APPLY ERRORS ---"
-              grep -iE "(^Error:|Error creating|Error deleting|Error modifying|exit status)" "$LOG" | head -20 || true
-              echo "--- END APPLY ERRORS ---"
-              return $STATUS
-            fi
+              -lock=false
           }
 
           fix_network_state() {
@@ -1367,32 +1365,19 @@ jobs:
           apply_module() {
             local MODULE=$1
             local MODULE_NAME="${MODULE##*/}"
-            local LOG="/tmp/tf-${MODULE_NAME}.log"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
-
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
-
-            # TERRAGRUNT_FORWARD_TF_STDOUT: attaches Terraform stdout directly to
-            # the parent fd, eliminating the 64KB pipe buffer (broken-pipe fix).
-            # 'apply -auto-approve' instead of 'plan + terraform apply' also avoids
-            # the exit-code-2 trap: 'terragrunt plan' exits 2 when changes exist,
-            # which bash || wrongly treats as failure.
+            # Output goes directly to the runner log (no intermediate file, no pipe).
+            # FORWARD_TF_STDOUT eliminates Terragrunt's internal pipe to Terraform
+            # (prevents broken-pipe on large refresh output, 29+ resources).
+            # set -e is active: any non-zero exit stops the pipeline immediately
+            # with the real error visible in the GitHub Actions log.
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_LOG_LEVEL=error \
             terragrunt apply \
               -auto-approve \
-              -lock=false \
-              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
-
-            cat "$LOG"
-
-            if [ $STATUS -ne 0 ]; then
-              echo "--- APPLY ERRORS ---"
-              grep -iE "(^Error:|Error creating|Error deleting|Error modifying|exit status)" "$LOG" | head -20 || true
-              echo "--- END APPLY ERRORS ---"
-              return $STATUS
-            fi
+              -lock=false
           }
 
           fix_network_state() {
@@ -1434,32 +1419,19 @@ jobs:
           apply_module() {
             local MODULE=$1
             local MODULE_NAME="${MODULE##*/}"
-            local LOG="/tmp/tf-${MODULE_NAME}.log"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
-
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
-
-            # TERRAGRUNT_FORWARD_TF_STDOUT: attaches Terraform stdout directly to
-            # the parent fd, eliminating the 64KB pipe buffer (broken-pipe fix).
-            # 'apply -auto-approve' instead of 'plan + terraform apply' also avoids
-            # the exit-code-2 trap: 'terragrunt plan' exits 2 when changes exist,
-            # which bash || wrongly treats as failure.
+            # Output goes directly to the runner log (no intermediate file, no pipe).
+            # FORWARD_TF_STDOUT eliminates Terragrunt's internal pipe to Terraform
+            # (prevents broken-pipe on large refresh output, 29+ resources).
+            # set -e is active: any non-zero exit stops the pipeline immediately
+            # with the real error visible in the GitHub Actions log.
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_LOG_LEVEL=error \
             terragrunt apply \
               -auto-approve \
-              -lock=false \
-              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
-
-            cat "$LOG"
-
-            if [ $STATUS -ne 0 ]; then
-              echo "--- APPLY ERRORS ---"
-              grep -iE "(^Error:|Error creating|Error deleting|Error modifying|exit status)" "$LOG" | head -20 || true
-              echo "--- END APPLY ERRORS ---"
-              return $STATUS
-            fi
+              -lock=false
           }
 
           fix_network_state() {
