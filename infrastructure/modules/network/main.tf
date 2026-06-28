@@ -528,10 +528,18 @@ resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
   count = var.enable_flow_logs ? 1 : 0
 
   name              = "/aws/vpc/flow-logs/${var.name_prefix}"
-  retention_in_days = max(var.flow_logs_retention_in_days, 365)
-  kms_key_id        = var.kms_key_id != "" ? var.kms_key_id : null
+  retention_in_days = var.flow_logs_retention_in_days
+  # kms_key_id only when explicitly set: passing null crashes CreateLogGroup in
+  # provider ~5.x when no CMK exists yet (InvalidParameterException).
+  kms_key_id = var.kms_key_id != "" ? var.kms_key_id : null
 
   tags = var.tags
+
+  lifecycle {
+    # Ignore changes to kms_key_id so that adding encryption later does not
+    # force a destroy/recreate of the log group (which would delete log data).
+    ignore_changes = [kms_key_id]
+  }
 }
 
 resource "aws_iam_role" "vpc_flow_logs" {
@@ -581,10 +589,19 @@ resource "aws_iam_role_policy" "vpc_flow_logs" {
 resource "aws_flow_log" "main" {
   count = var.enable_flow_logs ? 1 : 0
 
-  vpc_id          = aws_vpc.main.id
-  traffic_type    = "ALL"  # Registrar tra?fico aceptado Y rechazado
-  iam_role_arn    = aws_iam_role.vpc_flow_logs[0].arn
-  log_destination = aws_cloudwatch_log_group.vpc_flow_logs[0].arn
+  vpc_id               = aws_vpc.main.id
+  traffic_type         = "ALL"
+  log_destination_type = "cloud-watch-logs"
+  log_destination      = aws_cloudwatch_log_group.vpc_flow_logs[0].arn
+  iam_role_arn         = aws_iam_role.vpc_flow_logs[0].arn
+  max_aggregation_interval = 600
+
+  # Explicit depends_on: IAM role policy must be fully attached and the log
+  # group must exist before AWS accepts the CreateFlowLogs API call.
+  depends_on = [
+    aws_iam_role_policy.vpc_flow_logs,
+    aws_cloudwatch_log_group.vpc_flow_logs,
+  ]
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-flow-logs"
