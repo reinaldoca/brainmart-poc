@@ -1101,23 +1101,40 @@ jobs:
             echo "[import] Done scanning orphaned resources."
           }
 
-          # ── Apply network first, then verify outputs before continuing ──────────
-          # Pass 1: plan+apply to create all resources that don't exist yet
-          apply_module infrastructure/environments/dev/network
+          # ───────────────────────────────────────────────────────────────────────
+          # DEV network deploy — order matters:
+          # 1. terragrunt init  → creates .terragrunt-cache so terraform import can run
+          # 2. import orphaned resources (exist in AWS, missing from state after broken-pipe)
+          # 3. fix missing outputs in state
+          # 4. apply  → with state already up to date, plan = 0 or very few resources
+          # ───────────────────────────────────────────────────────────────────────
+          NET_DIR="$GITHUB_WORKSPACE/infrastructure/environments/dev/network"
+          cd "$NET_DIR"
 
-          # Get VPC ID for orphan detection
+          # Step 1 — init: populates .terragrunt-cache so terraform import can run
+          # Uses FORWARD_TF_STDOUT to avoid broken-pipe on large provider download output
+          echo "=== [network] init ==="
+          TERRAGRUNT_FORWARD_TF_STDOUT=true TERRAGRUNT_LOG_LEVEL=error \
+          terragrunt init --terragrunt-non-interactive \
+            > /tmp/tf-init-network.log 2>&1 || {
+            echo "INIT FAILED [network]:"; cat /tmp/tf-init-network.log; exit 1
+          }
+
+          # Step 2 — detect VPC (exists if prior runs created it; empty on first deploy)
           VPC_ID=$(aws ec2 describe-vpcs \
-            --filters "Name=tag:Name,Values=${PREFIX:-brainmart-dev}-vpc" \
+            --filters "Name=tag:Name,Values=brainmart-dev-vpc" \
             --query "Vpcs[0].VpcId" --output text --region us-east-1 2>/dev/null)
           [ "$VPC_ID" = "None" ] && VPC_ID=""
+          echo "[network] VPC_ID=${VPC_ID:-<not yet created>}"
 
-          # Import any resources created in AWS by prior broken-pipe runs
+          # Step 3 — import any resources that exist in AWS but are missing from state
+          # (created by prior broken-pipe runs whose state write never completed)
           import_orphaned_network "dev" "brainmart-dev" "$VPC_ID"
 
-          # Fix missing rds_security_group_id output
+          # Step 4 — fix missing rds_security_group_id output in state
           fix_network_state "dev" "brainmart-dev"
 
-          # Pass 2: re-plan with complete state (no-op if everything imported)
+          # Step 5 — plan + apply (near no-op when all orphaned resources already imported)
           apply_module infrastructure/environments/dev/network
 
           apply_module infrastructure/environments/dev/database
