@@ -520,7 +520,6 @@ jobs:
         run: |
           cd infrastructure/environments/${{ matrix.environment }}
           terragrunt run-all init \
-            --terragrunt-non-interactive \
             --terragrunt-parallelism 1
 
       - name: Terragrunt Plan
@@ -529,7 +528,6 @@ jobs:
         run: |
           cd infrastructure/environments/${{ matrix.environment }}
           terragrunt run-all plan \
-            --terragrunt-non-interactive \
             -lock=false \
             -out=tfplan.binary \
             2>&1 | tee plan-output.txt
@@ -896,7 +894,6 @@ jobs:
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_LOG_LEVEL=error \
             terragrunt apply \
-              --terragrunt-non-interactive \
               -auto-approve \
               -lock=false \
               > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
@@ -1215,7 +1212,6 @@ jobs:
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_LOG_LEVEL=error \
             terragrunt apply \
-              --terragrunt-non-interactive \
               -auto-approve \
               -lock=false \
               > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
@@ -1385,7 +1381,6 @@ jobs:
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_LOG_LEVEL=error \
             terragrunt apply \
-              --terragrunt-non-interactive \
               -auto-approve \
               -lock=false \
               > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
@@ -1453,7 +1448,6 @@ jobs:
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_LOG_LEVEL=error \
             terragrunt apply \
-              --terragrunt-non-interactive \
               -auto-approve \
               -lock=false \
               > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
@@ -1481,7 +1475,7 @@ jobs:
               --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
             if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
               echo "Importing SG $SG_ID into state..."
-              terragrunt import --terragrunt-non-interactive -lock=false \
+              terragrunt import -lock=false \
                 aws_security_group.rds "$SG_ID" > /tmp/tg-import-sg.log 2>&1 || true
               cat /tmp/tg-import-sg.log
             else
