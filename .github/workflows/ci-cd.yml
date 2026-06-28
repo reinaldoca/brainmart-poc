@@ -885,36 +885,30 @@ jobs:
             local LOG="/tmp/tf-${MODULE_NAME}.log"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
 
-            echo "=== [$MODULE_NAME] plan ==="
+            echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
 
-            # TERRAGRUNT_FORWARD_TF_STDOUT: makes Terragrunt attach Terraform's stdout
-            # directly to the parent process instead of creating an internal pipe.
-            # This eliminates the 64KB kernel pipe buffer that causes signal: broken pipe
-            # when Terraform generates >64KB output (refresh of 29+ resources).
+            # TERRAGRUNT_FORWARD_TF_STDOUT: attaches Terraform stdout directly to
+            # the parent fd, eliminating the 64KB pipe buffer (broken-pipe fix).
+            # 'apply -auto-approve' instead of 'plan + terraform apply' also avoids
+            # the exit-code-2 trap: 'terragrunt plan' exits 2 when changes exist,
+            # which bash || wrongly treats as failure.
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_LOG_LEVEL=error \
-            terragrunt plan \
-              --terragrunt-non-interactive -lock=false \
-              -out=tfplan.binary > "$LOG" 2>&1 || {
-              echo "PLAN FAILED [$MODULE_NAME]:"; cat "$LOG"; return 1
-            }
+            terragrunt apply \
+              --terragrunt-non-interactive \
+              -auto-approve \
+              -lock=false \
+              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
 
-            local PLAN_FILE CACHE_DIR
-            PLAN_FILE=$(find "$MODULE_DIR/.terragrunt-cache" -name "tfplan.binary" \
-              2>/dev/null | head -1)
-            if [ -z "$PLAN_FILE" ]; then
-              echo "ERROR: plan file not found in .terragrunt-cache"
-              cat "$LOG"; return 1
-            fi
-            CACHE_DIR=$(dirname "$PLAN_FILE")
-            echo "=== [$MODULE_NAME] apply (direct terraform, no pipe) ==="
-
-            # Apply directly with terraform — bypasses Terragrunt subprocess entirely
-            terraform -chdir="$CACHE_DIR" apply -input=false -lock=false \
-              tfplan.binary >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
             cat "$LOG"
-            return $STATUS
+
+            if [ $STATUS -ne 0 ]; then
+              echo "--- APPLY ERRORS ---"
+              grep -iE "(^Error:|Error creating|Error deleting|Error modifying|exit status)" "$LOG" | head -20 || true
+              echo "--- END APPLY ERRORS ---"
+              return $STATUS
+            fi
           }
 
           # ── Fix: patch S3 state if rds_security_group_id output is missing ──────
@@ -1211,28 +1205,31 @@ jobs:
             local MODULE_NAME="${MODULE##*/}"
             local LOG="/tmp/tf-${MODULE_NAME}.log"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
-            echo "=== [$MODULE_NAME] plan ==="
+
+            echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
+
+            # TERRAGRUNT_FORWARD_TF_STDOUT: attaches Terraform stdout directly to
+            # the parent fd, eliminating the 64KB pipe buffer (broken-pipe fix).
+            # 'apply -auto-approve' instead of 'plan + terraform apply' also avoids
+            # the exit-code-2 trap: 'terragrunt plan' exits 2 when changes exist,
+            # which bash || wrongly treats as failure.
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_LOG_LEVEL=error \
-            terragrunt plan \
-              --terragrunt-non-interactive -lock=false \
-              -out=tfplan.binary > "$LOG" 2>&1 || {
-              echo "PLAN FAILED [$MODULE_NAME]:"; cat "$LOG"; return 1
-            }
-            local PLAN_FILE CACHE_DIR
-            PLAN_FILE=$(find "$MODULE_DIR/.terragrunt-cache" -name "tfplan.binary" \
-              2>/dev/null | head -1)
-            if [ -z "$PLAN_FILE" ]; then
-              echo "ERROR: plan file not found in .terragrunt-cache"
-              cat "$LOG"; return 1
-            fi
-            CACHE_DIR=$(dirname "$PLAN_FILE")
-            echo "=== [$MODULE_NAME] apply (direct terraform) ==="
-            terraform -chdir="$CACHE_DIR" apply -input=false -lock=false \
-              tfplan.binary >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+            terragrunt apply \
+              --terragrunt-non-interactive \
+              -auto-approve \
+              -lock=false \
+              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+
             cat "$LOG"
-            return $STATUS
+
+            if [ $STATUS -ne 0 ]; then
+              echo "--- APPLY ERRORS ---"
+              grep -iE "(^Error:|Error creating|Error deleting|Error modifying|exit status)" "$LOG" | head -20 || true
+              echo "--- END APPLY ERRORS ---"
+              return $STATUS
+            fi
           }
 
           fix_network_state() {
@@ -1378,28 +1375,31 @@ jobs:
             local MODULE_NAME="${MODULE##*/}"
             local LOG="/tmp/tf-${MODULE_NAME}.log"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
-            echo "=== [$MODULE_NAME] plan ==="
+
+            echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
+
+            # TERRAGRUNT_FORWARD_TF_STDOUT: attaches Terraform stdout directly to
+            # the parent fd, eliminating the 64KB pipe buffer (broken-pipe fix).
+            # 'apply -auto-approve' instead of 'plan + terraform apply' also avoids
+            # the exit-code-2 trap: 'terragrunt plan' exits 2 when changes exist,
+            # which bash || wrongly treats as failure.
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_LOG_LEVEL=error \
-            terragrunt plan \
-              --terragrunt-non-interactive -lock=false \
-              -out=tfplan.binary > "$LOG" 2>&1 || {
-              echo "PLAN FAILED [$MODULE_NAME]:"; cat "$LOG"; return 1
-            }
-            local PLAN_FILE CACHE_DIR
-            PLAN_FILE=$(find "$MODULE_DIR/.terragrunt-cache" -name "tfplan.binary" \
-              2>/dev/null | head -1)
-            if [ -z "$PLAN_FILE" ]; then
-              echo "ERROR: plan file not found in .terragrunt-cache"
-              cat "$LOG"; return 1
-            fi
-            CACHE_DIR=$(dirname "$PLAN_FILE")
-            echo "=== [$MODULE_NAME] apply (direct terraform) ==="
-            terraform -chdir="$CACHE_DIR" apply -input=false -lock=false \
-              tfplan.binary >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+            terragrunt apply \
+              --terragrunt-non-interactive \
+              -auto-approve \
+              -lock=false \
+              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+
             cat "$LOG"
-            return $STATUS
+
+            if [ $STATUS -ne 0 ]; then
+              echo "--- APPLY ERRORS ---"
+              grep -iE "(^Error:|Error creating|Error deleting|Error modifying|exit status)" "$LOG" | head -20 || true
+              echo "--- END APPLY ERRORS ---"
+              return $STATUS
+            fi
           }
 
           fix_network_state() {
@@ -1443,28 +1443,31 @@ jobs:
             local MODULE_NAME="${MODULE##*/}"
             local LOG="/tmp/tf-${MODULE_NAME}.log"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
-            echo "=== [$MODULE_NAME] plan ==="
+
+            echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
+
+            # TERRAGRUNT_FORWARD_TF_STDOUT: attaches Terraform stdout directly to
+            # the parent fd, eliminating the 64KB pipe buffer (broken-pipe fix).
+            # 'apply -auto-approve' instead of 'plan + terraform apply' also avoids
+            # the exit-code-2 trap: 'terragrunt plan' exits 2 when changes exist,
+            # which bash || wrongly treats as failure.
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_LOG_LEVEL=error \
-            terragrunt plan \
-              --terragrunt-non-interactive -lock=false \
-              -out=tfplan.binary > "$LOG" 2>&1 || {
-              echo "PLAN FAILED [$MODULE_NAME]:"; cat "$LOG"; return 1
-            }
-            local PLAN_FILE CACHE_DIR
-            PLAN_FILE=$(find "$MODULE_DIR/.terragrunt-cache" -name "tfplan.binary" \
-              2>/dev/null | head -1)
-            if [ -z "$PLAN_FILE" ]; then
-              echo "ERROR: plan file not found in .terragrunt-cache"
-              cat "$LOG"; return 1
-            fi
-            CACHE_DIR=$(dirname "$PLAN_FILE")
-            echo "=== [$MODULE_NAME] apply (direct terraform) ==="
-            terraform -chdir="$CACHE_DIR" apply -input=false -lock=false \
-              tfplan.binary >> "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+            terragrunt apply \
+              --terragrunt-non-interactive \
+              -auto-approve \
+              -lock=false \
+              > "$LOG" 2>&1 && STATUS=0 || STATUS=$?
+
             cat "$LOG"
-            return $STATUS
+
+            if [ $STATUS -ne 0 ]; then
+              echo "--- APPLY ERRORS ---"
+              grep -iE "(^Error:|Error creating|Error deleting|Error modifying|exit status)" "$LOG" | head -20 || true
+              echo "--- END APPLY ERRORS ---"
+              return $STATUS
+            fi
           }
 
           fix_network_state() {
