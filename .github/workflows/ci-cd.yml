@@ -1101,35 +1101,33 @@ jobs:
           # 2. import orphaned resources (exist in AWS, missing from state after broken-pipe)
           # 3. fix missing outputs in state
           # 4. apply  → with state already up to date, plan = 0 or very few resources
-          # ───────────────────────────────────────────────────────────────────────
-          NET_DIR="$GITHUB_WORKSPACE/infrastructure/environments/dev/network"
-          cd "$NET_DIR"
+          # -- DEV network deploy --------------------------------------------------
+          # terragrunt apply internally runs 'terraform init' first, creating
+          # .terragrunt-cache.  If apply fails (orphaned resource already exists in
+          # AWS from a prior broken-pipe run), the cache IS there for terraform import.
+          # Pattern: attempt -> on failure, import orphaned + fix state -> retry once.
+          # ------------------------------------------------------------------------
+          apply_module infrastructure/environments/dev/network || NETWORK_RETRY=1
 
-          # Step 1 — init: populates .terragrunt-cache so terraform import can run
-          # Uses FORWARD_TF_STDOUT to avoid broken-pipe on large provider download output
-          echo "=== [network] init ==="
-          TERRAGRUNT_FORWARD_TF_STDOUT=true TERRAGRUNT_LOG_LEVEL=error \
-          terragrunt init --terragrunt-non-interactive \
-            > /tmp/tf-init-network.log 2>&1 || {
-            echo "INIT FAILED [network]:"; cat /tmp/tf-init-network.log; exit 1
-          }
+          if [ "${NETWORK_RETRY:-0}" = "1" ]; then
+            echo "=== [network] first attempt failed - scanning for orphaned resources ==="
 
-          # Step 2 — detect VPC (exists if prior runs created it; empty on first deploy)
-          VPC_ID=$(aws ec2 describe-vpcs \
-            --filters "Name=tag:Name,Values=brainmart-dev-vpc" \
-            --query "Vpcs[0].VpcId" --output text --region us-east-1 2>/dev/null)
-          [ "$VPC_ID" = "None" ] && VPC_ID=""
-          echo "[network] VPC_ID=${VPC_ID:-<not yet created>}"
+            # VPC already exists if apply partially ran (or from a prior run)
+            VPC_ID=$(aws ec2 describe-vpcs \
+              --filters "Name=tag:Name,Values=brainmart-dev-vpc" \
+              --query "Vpcs[0].VpcId" --output text --region us-east-1 2>/dev/null)
+            [ "$VPC_ID" = "None" ] && VPC_ID=""
+            echo "[network] VPC_ID=${VPC_ID:-<not yet created>}"
 
-          # Step 3 — import any resources that exist in AWS but are missing from state
-          # (created by prior broken-pipe runs whose state write never completed)
-          import_orphaned_network "dev" "brainmart-dev" "$VPC_ID"
+            # .terragrunt-cache was created by the failed apply - use it for imports
+            import_orphaned_network "dev" "brainmart-dev" "$VPC_ID"
 
-          # Step 4 — fix missing rds_security_group_id output in state
-          fix_network_state "dev" "brainmart-dev"
+            # Patch any missing outputs in S3 state
+            fix_network_state "dev" "brainmart-dev"
 
-          # Step 5 — plan + apply (near no-op when all orphaned resources already imported)
-          apply_module infrastructure/environments/dev/network
+            echo "=== [network] retrying apply after imports ==="
+            apply_module infrastructure/environments/dev/network
+          fi
 
           apply_module infrastructure/environments/dev/database
           apply_module infrastructure/environments/dev/storage
