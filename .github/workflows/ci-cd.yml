@@ -887,12 +887,10 @@ jobs:
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
 
-            # Use 'terragrunt apply' (not 'terraform apply') so that Terragrunt
-            # injects all inputs{} from terragrunt.hcl as TF_VAR_* env vars.
-            # Running terraform directly loses every required variable.
-            # TERRAGRUNT_NON_INTERACTIVE : auto-accept S3 bucket update prompts.
-            # TERRAGRUNT_FORWARD_TF_STDOUT: bypass internal pipe (broken-pipe fix).
-            # TF_LOG=ERROR              : provider-level AWS errors always visible.
+            # Use 'terragrunt apply': Terragrunt injects inputs{} as TF_VAR_* env vars.
+            # trap '' PIPE sets SIGPIPE=SIG_IGN, inherited via fork+exec into
+            # Terragrunt->Terraform. Prevents broken pipe/exit 255 when CI log pipe closes.
+            trap "" PIPE
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_NON_INTERACTIVE=true \
@@ -900,127 +898,10 @@ jobs:
               -auto-approve \
               -input=false \
               -lock=false
+            local RET=$?
+            trap - PIPE
+            return $RET
           }
-
-          # ── Fix: patch S3 state if rds_security_group_id output is missing ──────
-          # Root cause: state was saved before rds_security_group_id existed in outputs.tf
-          # or state save was interrupted by broken pipe. Fix: read state from S3 directly,
-          # find the SG resource or import from AWS, then patch the outputs section.
-          fix_network_state() {
-            local ENV=$1 PREFIX=$2 REGION="us-east-1"
-            local ACCOUNT_ID
-            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-            local BUCKET="brainmart-tfstate-${ACCOUNT_ID}-${REGION}"
-            local STATE_KEY="environments/${ENV}/network/terraform.tfstate"
-
-            echo "Checking s3://${BUCKET}/${STATE_KEY} for rds_security_group_id..."
-
-            # Download state directly from S3 (no terragrunt init needed)
-            if ! aws s3 cp "s3://${BUCKET}/${STATE_KEY}" /tmp/net-state.json 2>/dev/null; then
-              echo "State not in S3 yet. terraform apply will create it."
-              return 0
-            fi
-
-            # Check if output already present
-            if jq -e '.outputs.rds_security_group_id.value' /tmp/net-state.json > /dev/null 2>&1; then
-              SG_EXISTING=$(jq -r '.outputs.rds_security_group_id.value' /tmp/net-state.json)
-              echo "OK: rds_security_group_id=${SG_EXISTING} already in state."
-              return 0
-            fi
-
-            echo "OUTPUT MISSING. Checking state resources for aws_security_group.rds..."
-            SG_ID=$(jq -r '
-              .resources[]? |
-              select(.type == "aws_security_group" and .name == "rds") |
-              .instances[0]?.attributes.id // empty
-            ' /tmp/net-state.json 2>/dev/null)
-
-            if [ -z "$SG_ID" ]; then
-              echo "SG not in state resources. Looking in AWS by name..."
-              SG_ID=$(aws ec2 describe-security-groups \
-                --filters "Name=group-name,Values=${PREFIX}-rds-sg" \
-                --region "$REGION" \
-                --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
-              [ "$SG_ID" = "None" ] && SG_ID=""
-
-              if [ -z "$SG_ID" ]; then
-                echo "SG not in AWS yet. terraform apply will create it cleanly."
-                return 0
-              fi
-              echo "SG ${SG_ID} exists in AWS but not in state. Deleting stale resource..."
-              # Delete SG from AWS so Terraform can create it cleanly (SG has no ENIs yet)
-              aws ec2 delete-security-group --group-id "$SG_ID" --region "$REGION" 2>/dev/null && \
-                echo "SG deleted. terraform apply will recreate it." || \
-                echo "Could not delete SG (may have dependencies). terraform import will handle it."
-              return 0
-            fi
-
-            # SG IS in state resources but output section is stale — patch the state JSON
-            echo "SG ${SG_ID} in state resources. Patching outputs section directly..."
-            SERIAL=$(jq '.serial' /tmp/net-state.json)
-            jq --arg sg "$SG_ID" --argjson s "$((SERIAL + 1))" '
-              .serial = $s |
-              .outputs.rds_security_group_id = {"value": $sg, "type": "string"}
-            ' /tmp/net-state.json > /tmp/net-state-patched.json
-
-            if ! jq -e '.outputs.rds_security_group_id.value' /tmp/net-state-patched.json > /dev/null 2>&1; then
-              echo "ERROR: state patch validation failed. Aborting patch."; return 1
-            fi
-
-            echo "Uploading patched state to s3://${BUCKET}/${STATE_KEY}..."
-            aws s3 cp /tmp/net-state-patched.json "s3://${BUCKET}/${STATE_KEY}" --sse aws:kms && \
-              echo "State patched: rds_security_group_id=${SG_ID}" || \
-              { echo "ERROR: S3 upload failed"; return 1; }
-          }
-
-          # Import orphaned network resources (created in AWS by prior broken-pipe
-          # runs but missing from Terraform state). Must run BEFORE plan so plan
-          # sees them in state and doesn't try to recreate them.
-          import_orphaned_network() {
-            local ENV=$1 PREFIX=$2 VPC_ID=$3 REGION="us-east-1"
-            local NET_DIR="$GITHUB_WORKSPACE/infrastructure/environments/${ENV}/network"
-            local ACCOUNT_ID
-            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-            local BUCKET="brainmart-tfstate-${ACCOUNT_ID}-${REGION}"
-            local STATE_KEY="environments/${ENV}/network/terraform.tfstate"
-            local LOG="/tmp/tf-import-net.log"
-
-            [ -z "$VPC_ID" ] && { echo "[import] no VPC ID, skipping"; return 0; }
-
-            cd "$NET_DIR"
-            local CACHE_DIR
-            CACHE_DIR=$(find .terragrunt-cache \
-              -mindepth 3 -maxdepth 4 -type d -name "$MODULE_NAME" \
-              ! -path '*/.terraform*' \
-              2>/dev/null | sort -r | head -1)
-            [ -z "$CACHE_DIR" ] && { echo "[import] no cache dir, skipping"; return 0; }
-
-            aws s3 cp "s3://${BUCKET}/${STATE_KEY}" /tmp/net-imp.json 2>/dev/null || {
-              echo "[import] no state in S3 yet, skipping"; return 0
-            }
-
-            # Helper: import a resource only if aws_id is non-empty and not a placeholder
-            # Usage: try_import <tf_addr> <aws_id> <description>
-            try_import() {
-              local ADDR=$1 ID=$2 DESC=$3
-              if [ -z "$ID" ] || [ "$ID" = "None" ] || [ "$ID" = "null" ]; then
-                echo "[import] $DESC not found in AWS, skipping"
-                return 0
-              fi
-              echo "[import] Importing orphaned $DESC ($ID) as $ADDR..."
-              terraform -chdir="$CACHE_DIR" import -lock=false "$ADDR" "$ID" >> "$LOG" 2>&1 \
-                && echo "[import] OK" || echo "[import] WARN: import failed (may already be in state)"
-              tail -5 "$LOG"
-            }
-
-            # Helper: check if a resource is already in the downloaded state JSON
-            # Returns the id if found, empty string if not
-            in_state() {
-              local TYPE=$1 NAME=$2 IDX=${3:-0}
-              jq -r --arg t "$TYPE" --arg n "$NAME" --argjson i "$IDX" \
-                '.resources[]? | select(.type==$t and .name==$n) | .instances[$i]?.attributes.id // empty' \
-                /tmp/net-imp.json 2>/dev/null | head -1
-            }
 
             echo "[import] Scanning for orphaned network resources (VPC=$VPC_ID)..."
 
@@ -1192,11 +1073,13 @@ jobs:
 
           echo "=== [network] apply ==="
           cd "$NET_DIR"
+          trap "" PIPE
           TF_LOG=ERROR \
           TERRAGRUNT_FORWARD_TF_STDOUT=true \
           TERRAGRUNT_NON_INTERACTIVE=true \
           terragrunt apply \
             -auto-approve -input=false -lock=false
+          trap - PIPE
 
           apply_module infrastructure/environments/dev/database
           apply_module infrastructure/environments/dev/storage
@@ -1275,12 +1158,10 @@ jobs:
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
 
-            # Use 'terragrunt apply' (not 'terraform apply') so that Terragrunt
-            # injects all inputs{} from terragrunt.hcl as TF_VAR_* env vars.
-            # Running terraform directly loses every required variable.
-            # TERRAGRUNT_NON_INTERACTIVE : auto-accept S3 bucket update prompts.
-            # TERRAGRUNT_FORWARD_TF_STDOUT: bypass internal pipe (broken-pipe fix).
-            # TF_LOG=ERROR              : provider-level AWS errors always visible.
+            # Use 'terragrunt apply': injects inputs{} as TF_VAR_*.
+            # trap '' PIPE: SIGPIPE=SIG_IGN inherited by Terragrunt->Terraform.
+            # Prevents broken pipe/exit 255 when CI log pipe closes.
+            trap "" PIPE
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_NON_INTERACTIVE=true \
@@ -1288,6 +1169,9 @@ jobs:
               -auto-approve \
               -input=false \
               -lock=false
+            local RET=$?
+            trap - PIPE
+            return $RET
           }
 
           fix_network_state() {
@@ -1436,12 +1320,10 @@ jobs:
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
 
-            # Use 'terragrunt apply' (not 'terraform apply') so that Terragrunt
-            # injects all inputs{} from terragrunt.hcl as TF_VAR_* env vars.
-            # Running terraform directly loses every required variable.
-            # TERRAGRUNT_NON_INTERACTIVE : auto-accept S3 bucket update prompts.
-            # TERRAGRUNT_FORWARD_TF_STDOUT: bypass internal pipe (broken-pipe fix).
-            # TF_LOG=ERROR              : provider-level AWS errors always visible.
+            # Use 'terragrunt apply': injects inputs{} as TF_VAR_*.
+            # trap '' PIPE: SIGPIPE=SIG_IGN inherited by Terragrunt->Terraform.
+            # Prevents broken pipe/exit 255 when CI log pipe closes.
+            trap "" PIPE
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_NON_INTERACTIVE=true \
@@ -1449,6 +1331,9 @@ jobs:
               -auto-approve \
               -input=false \
               -lock=false
+            local RET=$?
+            trap - PIPE
+            return $RET
           }
 
           fix_network_state() {
@@ -1495,12 +1380,10 @@ jobs:
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
 
-            # Use 'terragrunt apply' (not 'terraform apply') so that Terragrunt
-            # injects all inputs{} from terragrunt.hcl as TF_VAR_* env vars.
-            # Running terraform directly loses every required variable.
-            # TERRAGRUNT_NON_INTERACTIVE : auto-accept S3 bucket update prompts.
-            # TERRAGRUNT_FORWARD_TF_STDOUT: bypass internal pipe (broken-pipe fix).
-            # TF_LOG=ERROR              : provider-level AWS errors always visible.
+            # Use 'terragrunt apply': injects inputs{} as TF_VAR_*.
+            # trap '' PIPE: SIGPIPE=SIG_IGN inherited by Terragrunt->Terraform.
+            # Prevents broken pipe/exit 255 when CI log pipe closes.
+            trap "" PIPE
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_NON_INTERACTIVE=true \
@@ -1508,6 +1391,9 @@ jobs:
               -auto-approve \
               -input=false \
               -lock=false
+            local RET=$?
+            trap - PIPE
+            return $RET
           }
 
           fix_network_state() {
