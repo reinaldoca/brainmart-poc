@@ -898,9 +898,14 @@ jobs:
             terragrunt init -input=false
 
             # Locate the cache directory Terragrunt just populated
+            # The source "../../../modules//MODULE_NAME" makes Terragrunt copy
+            # ALL of modules/ into the cache, creating network/, database/, etc.
+            # Searching by -name "main.tf" returns the WRONG module (first hit).
+            # Fix: search for the directory named exactly $MODULE_NAME.
             CACHE_DIR=$(find "$MODULE_DIR/.terragrunt-cache" \
-              -maxdepth 7 -name "main.tf" ! -path '*/.terraform/*' \
-              2>/dev/null | head -1 | xargs -r dirname)
+              -mindepth 3 -maxdepth 4 -type d -name "$MODULE_NAME" \
+              ! -path '*/.terraform*' \
+              2>/dev/null | sort -r | head -1)
 
             [ -z "$CACHE_DIR" ] && { echo "FATAL: cache not found for $MODULE_NAME"; exit 1; }
             echo "[apply_module] cache_dir=$CACHE_DIR"
@@ -1002,8 +1007,10 @@ jobs:
 
             cd "$NET_DIR"
             local CACHE_DIR
-            CACHE_DIR=$(find .terragrunt-cache -maxdepth 6 -name "main.tf" \
-              ! -path '*/.terraform/*' 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+            CACHE_DIR=$(find .terragrunt-cache \
+              -mindepth 3 -maxdepth 4 -type d -name "$MODULE_NAME" \
+              ! -path '*/.terraform*' \
+              2>/dev/null | sort -r | head -1)
             [ -z "$CACHE_DIR" ] && { echo "[import] no cache dir, skipping"; return 0; }
 
             aws s3 cp "s3://${BUCKET}/${STATE_KEY}" /tmp/net-imp.json 2>/dev/null || {
@@ -1122,16 +1129,19 @@ jobs:
           TERRAGRUNT_NON_INTERACTIVE=true \
           terragrunt init -input=false
 
+          # Search for the "network" subdir directly - not main.tf - because
+          # Terragrunt copies ALL of modules/ into the cache (one subdir per module).
           NET_CACHE=$(find "$NET_DIR/.terragrunt-cache" \
-            -maxdepth 7 -name "main.tf" ! -path "*/.terraform/*" \
-            2>/dev/null | head -1 | xargs -r dirname)
+            -mindepth 3 -maxdepth 4 -type d -name "network" \
+            ! -path '*/.terraform*' \
+            2>/dev/null | sort -r | head -1)
           [ -z "$NET_CACHE" ] && { echo "FATAL: network cache not found"; exit 1; }
           echo "[network] cache_dir=$NET_CACHE"
 
           # Import aws_flow_log.main[0] if it exists in AWS but not in state.
           # (state was not saved on prior runs due to broken-pipe)
           FL_IN_STATE=$(TF_LOG="" terraform -chdir="$NET_CACHE" \
-            state list 2>/dev/null | grep "aws_flow_log.main" || true)
+            state list 2>/dev/null | grep "aws_flow_log.main" || echo "")
 
           if [ -z "$FL_IN_STATE" ]; then
             echo "[network] Flow log not in state. Querying AWS..."
@@ -1258,9 +1268,14 @@ jobs:
             terragrunt init -input=false
 
             # Locate the cache directory Terragrunt just populated
+            # The source "../../../modules//MODULE_NAME" makes Terragrunt copy
+            # ALL of modules/ into the cache, creating network/, database/, etc.
+            # Searching by -name "main.tf" returns the WRONG module (first hit).
+            # Fix: search for the directory named exactly $MODULE_NAME.
             CACHE_DIR=$(find "$MODULE_DIR/.terragrunt-cache" \
-              -maxdepth 7 -name "main.tf" ! -path '*/.terraform/*' \
-              2>/dev/null | head -1 | xargs -r dirname)
+              -mindepth 3 -maxdepth 4 -type d -name "$MODULE_NAME" \
+              ! -path '*/.terraform*' \
+              2>/dev/null | sort -r | head -1)
 
             [ -z "$CACHE_DIR" ] && { echo "FATAL: cache not found for $MODULE_NAME"; exit 1; }
             echo "[apply_module] cache_dir=$CACHE_DIR"
@@ -1432,9 +1447,14 @@ jobs:
             terragrunt init -input=false
 
             # Locate the cache directory Terragrunt just populated
+            # The source "../../../modules//MODULE_NAME" makes Terragrunt copy
+            # ALL of modules/ into the cache, creating network/, database/, etc.
+            # Searching by -name "main.tf" returns the WRONG module (first hit).
+            # Fix: search for the directory named exactly $MODULE_NAME.
             CACHE_DIR=$(find "$MODULE_DIR/.terragrunt-cache" \
-              -maxdepth 7 -name "main.tf" ! -path '*/.terraform/*' \
-              2>/dev/null | head -1 | xargs -r dirname)
+              -mindepth 3 -maxdepth 4 -type d -name "$MODULE_NAME" \
+              ! -path '*/.terraform*' \
+              2>/dev/null | sort -r | head -1)
 
             [ -z "$CACHE_DIR" ] && { echo "FATAL: cache not found for $MODULE_NAME"; exit 1; }
             echo "[apply_module] cache_dir=$CACHE_DIR"
@@ -1504,9 +1524,14 @@ jobs:
             terragrunt init -input=false
 
             # Locate the cache directory Terragrunt just populated
+            # The source "../../../modules//MODULE_NAME" makes Terragrunt copy
+            # ALL of modules/ into the cache, creating network/, database/, etc.
+            # Searching by -name "main.tf" returns the WRONG module (first hit).
+            # Fix: search for the directory named exactly $MODULE_NAME.
             CACHE_DIR=$(find "$MODULE_DIR/.terragrunt-cache" \
-              -maxdepth 7 -name "main.tf" ! -path '*/.terraform/*' \
-              2>/dev/null | head -1 | xargs -r dirname)
+              -mindepth 3 -maxdepth 4 -type d -name "$MODULE_NAME" \
+              ! -path '*/.terraform*' \
+              2>/dev/null | sort -r | head -1)
 
             [ -z "$CACHE_DIR" ] && { echo "FATAL: cache not found for $MODULE_NAME"; exit 1; }
             echo "[apply_module] cache_dir=$CACHE_DIR"
