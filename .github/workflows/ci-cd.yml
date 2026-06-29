@@ -883,38 +883,20 @@ jobs:
             local MODULE=$1
             local MODULE_NAME="${MODULE##*/}"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
-            local CACHE_DIR
 
-            echo "=== [$MODULE_NAME] init (terragrunt) ==="
+            echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
 
-            # TF_LOG=ERROR: OpenTofu/Terraform writes provider errors (e.g.
-            # "FlowLogAlreadyExists", "AccessDenied") to stderr at ERROR level.
-            # Previously TERRAGRUNT_LOG_LEVEL=error was silencing those lines.
-            # FORWARD_TF_STDOUT: eliminates Terragrunt's internal pipe (broken-pipe fix).
+            # Use 'terragrunt apply' (not 'terraform apply') so that Terragrunt
+            # injects all inputs{} from terragrunt.hcl as TF_VAR_* env vars.
+            # Running terraform directly loses every required variable.
+            # TERRAGRUNT_NON_INTERACTIVE : auto-accept S3 bucket update prompts.
+            # TERRAGRUNT_FORWARD_TF_STDOUT: bypass internal pipe (broken-pipe fix).
+            # TF_LOG=ERROR              : provider-level AWS errors always visible.
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_NON_INTERACTIVE=true \
-            terragrunt init -input=false
-
-            # Locate the cache directory Terragrunt just populated
-            # The source "../../../modules//MODULE_NAME" makes Terragrunt copy
-            # ALL of modules/ into the cache, creating network/, database/, etc.
-            # Searching by -name "main.tf" returns the WRONG module (first hit).
-            # Fix: search for the directory named exactly $MODULE_NAME.
-            CACHE_DIR=$(find "$MODULE_DIR/.terragrunt-cache" \
-              -mindepth 3 -maxdepth 4 -type d -name "$MODULE_NAME" \
-              ! -path '*/.terraform*' \
-              2>/dev/null | sort -r | head -1)
-
-            [ -z "$CACHE_DIR" ] && { echo "FATAL: cache not found for $MODULE_NAME"; exit 1; }
-            echo "[apply_module] cache_dir=$CACHE_DIR"
-
-            echo "=== [$MODULE_NAME] apply ==="
-            # Direct terraform/tofu apply: full output, no Terragrunt wrapper,
-            # no broken-pipe, no cascade noise. TF_LOG=ERROR shows provider errors.
-            TF_LOG=ERROR \
-            terraform -chdir="$CACHE_DIR" apply \
+            terragrunt apply \
               -auto-approve \
               -input=false \
               -lock=false
@@ -1209,7 +1191,11 @@ jobs:
           fix_network_state "dev" "brainmart-dev"
 
           echo "=== [network] apply ==="
-          TF_LOG=ERROR terraform -chdir="$NET_CACHE" apply \
+          cd "$NET_DIR"
+          TF_LOG=ERROR \
+          TERRAGRUNT_FORWARD_TF_STDOUT=true \
+          TERRAGRUNT_NON_INTERACTIVE=true \
+          terragrunt apply \
             -auto-approve -input=false -lock=false
 
           apply_module infrastructure/environments/dev/database
@@ -1285,38 +1271,20 @@ jobs:
             local MODULE=$1
             local MODULE_NAME="${MODULE##*/}"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
-            local CACHE_DIR
 
-            echo "=== [$MODULE_NAME] init (terragrunt) ==="
+            echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
 
-            # TF_LOG=ERROR: OpenTofu/Terraform writes provider errors (e.g.
-            # "FlowLogAlreadyExists", "AccessDenied") to stderr at ERROR level.
-            # Previously TERRAGRUNT_LOG_LEVEL=error was silencing those lines.
-            # FORWARD_TF_STDOUT: eliminates Terragrunt's internal pipe (broken-pipe fix).
+            # Use 'terragrunt apply' (not 'terraform apply') so that Terragrunt
+            # injects all inputs{} from terragrunt.hcl as TF_VAR_* env vars.
+            # Running terraform directly loses every required variable.
+            # TERRAGRUNT_NON_INTERACTIVE : auto-accept S3 bucket update prompts.
+            # TERRAGRUNT_FORWARD_TF_STDOUT: bypass internal pipe (broken-pipe fix).
+            # TF_LOG=ERROR              : provider-level AWS errors always visible.
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_NON_INTERACTIVE=true \
-            terragrunt init -input=false
-
-            # Locate the cache directory Terragrunt just populated
-            # The source "../../../modules//MODULE_NAME" makes Terragrunt copy
-            # ALL of modules/ into the cache, creating network/, database/, etc.
-            # Searching by -name "main.tf" returns the WRONG module (first hit).
-            # Fix: search for the directory named exactly $MODULE_NAME.
-            CACHE_DIR=$(find "$MODULE_DIR/.terragrunt-cache" \
-              -mindepth 3 -maxdepth 4 -type d -name "$MODULE_NAME" \
-              ! -path '*/.terraform*' \
-              2>/dev/null | sort -r | head -1)
-
-            [ -z "$CACHE_DIR" ] && { echo "FATAL: cache not found for $MODULE_NAME"; exit 1; }
-            echo "[apply_module] cache_dir=$CACHE_DIR"
-
-            echo "=== [$MODULE_NAME] apply ==="
-            # Direct terraform/tofu apply: full output, no Terragrunt wrapper,
-            # no broken-pipe, no cascade noise. TF_LOG=ERROR shows provider errors.
-            TF_LOG=ERROR \
-            terraform -chdir="$CACHE_DIR" apply \
+            terragrunt apply \
               -auto-approve \
               -input=false \
               -lock=false
@@ -1464,38 +1432,20 @@ jobs:
             local MODULE=$1
             local MODULE_NAME="${MODULE##*/}"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
-            local CACHE_DIR
 
-            echo "=== [$MODULE_NAME] init (terragrunt) ==="
+            echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
 
-            # TF_LOG=ERROR: OpenTofu/Terraform writes provider errors (e.g.
-            # "FlowLogAlreadyExists", "AccessDenied") to stderr at ERROR level.
-            # Previously TERRAGRUNT_LOG_LEVEL=error was silencing those lines.
-            # FORWARD_TF_STDOUT: eliminates Terragrunt's internal pipe (broken-pipe fix).
+            # Use 'terragrunt apply' (not 'terraform apply') so that Terragrunt
+            # injects all inputs{} from terragrunt.hcl as TF_VAR_* env vars.
+            # Running terraform directly loses every required variable.
+            # TERRAGRUNT_NON_INTERACTIVE : auto-accept S3 bucket update prompts.
+            # TERRAGRUNT_FORWARD_TF_STDOUT: bypass internal pipe (broken-pipe fix).
+            # TF_LOG=ERROR              : provider-level AWS errors always visible.
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_NON_INTERACTIVE=true \
-            terragrunt init -input=false
-
-            # Locate the cache directory Terragrunt just populated
-            # The source "../../../modules//MODULE_NAME" makes Terragrunt copy
-            # ALL of modules/ into the cache, creating network/, database/, etc.
-            # Searching by -name "main.tf" returns the WRONG module (first hit).
-            # Fix: search for the directory named exactly $MODULE_NAME.
-            CACHE_DIR=$(find "$MODULE_DIR/.terragrunt-cache" \
-              -mindepth 3 -maxdepth 4 -type d -name "$MODULE_NAME" \
-              ! -path '*/.terraform*' \
-              2>/dev/null | sort -r | head -1)
-
-            [ -z "$CACHE_DIR" ] && { echo "FATAL: cache not found for $MODULE_NAME"; exit 1; }
-            echo "[apply_module] cache_dir=$CACHE_DIR"
-
-            echo "=== [$MODULE_NAME] apply ==="
-            # Direct terraform/tofu apply: full output, no Terragrunt wrapper,
-            # no broken-pipe, no cascade noise. TF_LOG=ERROR shows provider errors.
-            TF_LOG=ERROR \
-            terraform -chdir="$CACHE_DIR" apply \
+            terragrunt apply \
               -auto-approve \
               -input=false \
               -lock=false
@@ -1541,38 +1491,20 @@ jobs:
             local MODULE=$1
             local MODULE_NAME="${MODULE##*/}"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
-            local CACHE_DIR
 
-            echo "=== [$MODULE_NAME] init (terragrunt) ==="
+            echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
 
-            # TF_LOG=ERROR: OpenTofu/Terraform writes provider errors (e.g.
-            # "FlowLogAlreadyExists", "AccessDenied") to stderr at ERROR level.
-            # Previously TERRAGRUNT_LOG_LEVEL=error was silencing those lines.
-            # FORWARD_TF_STDOUT: eliminates Terragrunt's internal pipe (broken-pipe fix).
+            # Use 'terragrunt apply' (not 'terraform apply') so that Terragrunt
+            # injects all inputs{} from terragrunt.hcl as TF_VAR_* env vars.
+            # Running terraform directly loses every required variable.
+            # TERRAGRUNT_NON_INTERACTIVE : auto-accept S3 bucket update prompts.
+            # TERRAGRUNT_FORWARD_TF_STDOUT: bypass internal pipe (broken-pipe fix).
+            # TF_LOG=ERROR              : provider-level AWS errors always visible.
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_NON_INTERACTIVE=true \
-            terragrunt init -input=false
-
-            # Locate the cache directory Terragrunt just populated
-            # The source "../../../modules//MODULE_NAME" makes Terragrunt copy
-            # ALL of modules/ into the cache, creating network/, database/, etc.
-            # Searching by -name "main.tf" returns the WRONG module (first hit).
-            # Fix: search for the directory named exactly $MODULE_NAME.
-            CACHE_DIR=$(find "$MODULE_DIR/.terragrunt-cache" \
-              -mindepth 3 -maxdepth 4 -type d -name "$MODULE_NAME" \
-              ! -path '*/.terraform*' \
-              2>/dev/null | sort -r | head -1)
-
-            [ -z "$CACHE_DIR" ] && { echo "FATAL: cache not found for $MODULE_NAME"; exit 1; }
-            echo "[apply_module] cache_dir=$CACHE_DIR"
-
-            echo "=== [$MODULE_NAME] apply ==="
-            # Direct terraform/tofu apply: full output, no Terragrunt wrapper,
-            # no broken-pipe, no cascade noise. TF_LOG=ERROR shows provider errors.
-            TF_LOG=ERROR \
-            terraform -chdir="$CACHE_DIR" apply \
+            terragrunt apply \
               -auto-approve \
               -input=false \
               -lock=false
