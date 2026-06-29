@@ -498,13 +498,19 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: ⚙️  Setup Terragrunt
+      - name: ⚙️  Setup Terragrunt + conftest
         run: |
           curl -Lo terragrunt \
             "https://github.com/gruntwork-io/terragrunt/releases/download/v${{ env.TERRAGRUNT_VERSION }}/terragrunt_linux_amd64"
-          chmod +x terragrunt
-          sudo mv terragrunt /usr/local/bin/
+          chmod +x terragrunt && sudo mv terragrunt /usr/local/bin/
           terragrunt --version
+
+          CONFTEST_VERSION=0.53.0
+          curl -fsSL \
+            "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" \
+            | tar -xz -C /tmp conftest
+          sudo mv /tmp/conftest /usr/local/bin/conftest
+          conftest --version
 
       - name: 🔑 Configurar credenciales AWS via OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -903,71 +909,7 @@ jobs:
             return $RET
           }
 
-            echo "[import] Scanning for orphaned network resources (VPC=$VPC_ID)..."
-
-            # VPC Endpoints -------------------------------------------------------
-            for SVC_PAIR in \
-              "s3:com.amazonaws.${REGION}.s3:Gateway:aws_vpc_endpoint.s3[0]" \
-              "dynamodb:com.amazonaws.${REGION}.dynamodb:Gateway:aws_vpc_endpoint.dynamodb[0]" \
-              "ecr_api:com.amazonaws.${REGION}.ecr.api:Interface:aws_vpc_endpoint.ecr_api[0]" \
-              "ecr_dkr:com.amazonaws.${REGION}.ecr.dkr:Interface:aws_vpc_endpoint.ecr_dkr[0]" \
-              "cloudwatch_logs:com.amazonaws.${REGION}.logs:Interface:aws_vpc_endpoint.cloudwatch_logs[0]" \
-              "secrets_manager:com.amazonaws.${REGION}.secretsmanager:Interface:aws_vpc_endpoint.secrets_manager[0]"
-            do
-              SVC_NAME=$(echo "$SVC_PAIR" | cut -d: -f1)
-              SVC_FULL=$(echo "$SVC_PAIR" | cut -d: -f2)
-              SVC_TYPE=$(echo "$SVC_PAIR" | cut -d: -f3)
-              TF_ADDR=$(echo "$SVC_PAIR" | cut -d: -f4)
-              TF_NAME=$(echo "$SVC_NAME" | tr -d '[]0')
-
-              CURRENT=$(in_state "aws_vpc_endpoint" "$SVC_NAME")
-              if [ -z "$CURRENT" ]; then
-                VPCE_ID=$(aws ec2 describe-vpc-endpoints \
-                  --filters "Name=vpc-id,Values=${VPC_ID}" \
-                           "Name=service-name,Values=${SVC_FULL}" \
-                           "Name=vpc-endpoint-type,Values=${SVC_TYPE}" \
-                           "Name=vpc-endpoint-state,Values=available,pending" \
-                  --query "VpcEndpoints[0].VpcEndpointId" --output text \
-                  --region "$REGION" 2>/dev/null)
-                try_import "$TF_ADDR" "$VPCE_ID" "VPC endpoint ${SVC_NAME}"
-              fi
-            done
-
-            # VPC Flow Log --------------------------------------------------------
-            CURRENT=$(in_state "aws_flow_log" "main")
-            if [ -z "$CURRENT" ]; then
-              FL_ID=$(aws ec2 describe-flow-logs \
-                --filter "Name=resource-id,Values=${VPC_ID}" \
-                         "Name=log-destination-type,Values=cloud-watch-logs" \
-                --query "FlowLogs[0].FlowLogId" --output text \
-                --region "$REGION" 2>/dev/null)
-              try_import 'aws_flow_log.main[0]' "$FL_ID" "VPC flow log"
-            fi
-
-            # CloudWatch Log Group ------------------------------------------------
-            CURRENT=$(in_state "aws_cloudwatch_log_group" "vpc_flow_logs")
-            if [ -z "$CURRENT" ]; then
-              LG_NAME="/aws/vpc/flow-logs/${PREFIX}"
-              LG_EXISTS=$(aws logs describe-log-groups \
-                --log-group-name-prefix "$LG_NAME" \
-                --query "logGroups[?logGroupName=='${LG_NAME}'].logGroupName" \
-                --output text --region "$REGION" 2>/dev/null)
-              [ -n "$LG_EXISTS" ] && try_import \
-                'aws_cloudwatch_log_group.vpc_flow_logs[0]' "$LG_NAME" "CloudWatch log group"
-            fi
-
-            # IAM Role for Flow Logs ----------------------------------------------
-            CURRENT=$(in_state "aws_iam_role" "vpc_flow_logs")
-            if [ -z "$CURRENT" ]; then
-              ROLE_NAME="${PREFIX}-vpc-flow-logs-role"
-              ROLE_EXISTS=$(aws iam get-role --role-name "$ROLE_NAME" \
-                --query "Role.RoleName" --output text 2>/dev/null)
-              [ -n "$ROLE_EXISTS" ] && [ "$ROLE_EXISTS" != "None" ] && try_import \
-                'aws_iam_role.vpc_flow_logs[0]' "$ROLE_NAME" "IAM role vpc-flow-logs"
-            fi
-
-            echo "[import] Done scanning orphaned resources."
-          }
+          #
 
           # ───────────────────────────────────────────────────────────────────────
           # DEV network deploy — order matters:
