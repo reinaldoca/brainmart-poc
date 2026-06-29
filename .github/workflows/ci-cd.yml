@@ -886,13 +886,12 @@ jobs:
             echo "=== [$MODULE_NAME] init (terragrunt) ==="
             cd "$MODULE_DIR"
 
-            # Terragrunt init:
-            #  - copies module source to .terragrunt-cache
-            #  - generates backend.tf, provider.tf, dependency data-source files
-            #  - runs 'terraform init' (downloads providers)
-            # Does NOT apply any changes. set -e stops here on failure.
+            # TF_LOG=ERROR: OpenTofu/Terraform writes provider errors (e.g.
+            # "FlowLogAlreadyExists", "AccessDenied") to stderr at ERROR level.
+            # Previously TERRAGRUNT_LOG_LEVEL=error was silencing those lines.
+            # FORWARD_TF_STDOUT: eliminates Terragrunt's internal pipe (broken-pipe fix).
+            TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
-            TERRAGRUNT_LOG_LEVEL=error \
             terragrunt init -input=false
 
             # Locate the cache directory Terragrunt just populated
@@ -900,18 +899,13 @@ jobs:
               -maxdepth 7 -name "main.tf" ! -path '*/.terraform/*' \
               2>/dev/null | head -1 | xargs -r dirname)
 
-            if [ -z "$CACHE_DIR" ]; then
-              echo "FATAL: .terragrunt-cache not found for $MODULE_NAME after init"
-              exit 1
-            fi
+            [ -z "$CACHE_DIR" ] && { echo "FATAL: cache not found for $MODULE_NAME"; exit 1; }
             echo "[apply_module] cache_dir=$CACHE_DIR"
 
-            echo "=== [$MODULE_NAME] apply (direct terraform) ==="
-            # Direct 'terraform apply' — bypasses Terragrunt wrapper entirely:
-            #   * No Terragrunt internal pipe → no broken-pipe / output truncation
-            #   * Full unfiltered stdout/stderr → REAL error visible in CI log
-            #   * No cascade dependency noise ([database]/[compute]/[storage])
-            #   * set -e stops the pipeline on failure with the full error shown
+            echo "=== [$MODULE_NAME] apply ==="
+            # Direct terraform/tofu apply: full output, no Terragrunt wrapper,
+            # no broken-pipe, no cascade noise. TF_LOG=ERROR shows provider errors.
+            TF_LOG=ERROR \
             terraform -chdir="$CACHE_DIR" apply \
               -auto-approve \
               -input=false \
@@ -1238,13 +1232,12 @@ jobs:
             echo "=== [$MODULE_NAME] init (terragrunt) ==="
             cd "$MODULE_DIR"
 
-            # Terragrunt init:
-            #  - copies module source to .terragrunt-cache
-            #  - generates backend.tf, provider.tf, dependency data-source files
-            #  - runs 'terraform init' (downloads providers)
-            # Does NOT apply any changes. set -e stops here on failure.
+            # TF_LOG=ERROR: OpenTofu/Terraform writes provider errors (e.g.
+            # "FlowLogAlreadyExists", "AccessDenied") to stderr at ERROR level.
+            # Previously TERRAGRUNT_LOG_LEVEL=error was silencing those lines.
+            # FORWARD_TF_STDOUT: eliminates Terragrunt's internal pipe (broken-pipe fix).
+            TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
-            TERRAGRUNT_LOG_LEVEL=error \
             terragrunt init -input=false
 
             # Locate the cache directory Terragrunt just populated
@@ -1252,18 +1245,13 @@ jobs:
               -maxdepth 7 -name "main.tf" ! -path '*/.terraform/*' \
               2>/dev/null | head -1 | xargs -r dirname)
 
-            if [ -z "$CACHE_DIR" ]; then
-              echo "FATAL: .terragrunt-cache not found for $MODULE_NAME after init"
-              exit 1
-            fi
+            [ -z "$CACHE_DIR" ] && { echo "FATAL: cache not found for $MODULE_NAME"; exit 1; }
             echo "[apply_module] cache_dir=$CACHE_DIR"
 
-            echo "=== [$MODULE_NAME] apply (direct terraform) ==="
-            # Direct 'terraform apply' — bypasses Terragrunt wrapper entirely:
-            #   * No Terragrunt internal pipe → no broken-pipe / output truncation
-            #   * Full unfiltered stdout/stderr → REAL error visible in CI log
-            #   * No cascade dependency noise ([database]/[compute]/[storage])
-            #   * set -e stops the pipeline on failure with the full error shown
+            echo "=== [$MODULE_NAME] apply ==="
+            # Direct terraform/tofu apply: full output, no Terragrunt wrapper,
+            # no broken-pipe, no cascade noise. TF_LOG=ERROR shows provider errors.
+            TF_LOG=ERROR \
             terraform -chdir="$CACHE_DIR" apply \
               -auto-approve \
               -input=false \
@@ -1417,13 +1405,12 @@ jobs:
             echo "=== [$MODULE_NAME] init (terragrunt) ==="
             cd "$MODULE_DIR"
 
-            # Terragrunt init:
-            #  - copies module source to .terragrunt-cache
-            #  - generates backend.tf, provider.tf, dependency data-source files
-            #  - runs 'terraform init' (downloads providers)
-            # Does NOT apply any changes. set -e stops here on failure.
+            # TF_LOG=ERROR: OpenTofu/Terraform writes provider errors (e.g.
+            # "FlowLogAlreadyExists", "AccessDenied") to stderr at ERROR level.
+            # Previously TERRAGRUNT_LOG_LEVEL=error was silencing those lines.
+            # FORWARD_TF_STDOUT: eliminates Terragrunt's internal pipe (broken-pipe fix).
+            TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
-            TERRAGRUNT_LOG_LEVEL=error \
             terragrunt init -input=false
 
             # Locate the cache directory Terragrunt just populated
@@ -1431,18 +1418,13 @@ jobs:
               -maxdepth 7 -name "main.tf" ! -path '*/.terraform/*' \
               2>/dev/null | head -1 | xargs -r dirname)
 
-            if [ -z "$CACHE_DIR" ]; then
-              echo "FATAL: .terragrunt-cache not found for $MODULE_NAME after init"
-              exit 1
-            fi
+            [ -z "$CACHE_DIR" ] && { echo "FATAL: cache not found for $MODULE_NAME"; exit 1; }
             echo "[apply_module] cache_dir=$CACHE_DIR"
 
-            echo "=== [$MODULE_NAME] apply (direct terraform) ==="
-            # Direct 'terraform apply' — bypasses Terragrunt wrapper entirely:
-            #   * No Terragrunt internal pipe → no broken-pipe / output truncation
-            #   * Full unfiltered stdout/stderr → REAL error visible in CI log
-            #   * No cascade dependency noise ([database]/[compute]/[storage])
-            #   * set -e stops the pipeline on failure with the full error shown
+            echo "=== [$MODULE_NAME] apply ==="
+            # Direct terraform/tofu apply: full output, no Terragrunt wrapper,
+            # no broken-pipe, no cascade noise. TF_LOG=ERROR shows provider errors.
+            TF_LOG=ERROR \
             terraform -chdir="$CACHE_DIR" apply \
               -auto-approve \
               -input=false \
@@ -1494,13 +1476,12 @@ jobs:
             echo "=== [$MODULE_NAME] init (terragrunt) ==="
             cd "$MODULE_DIR"
 
-            # Terragrunt init:
-            #  - copies module source to .terragrunt-cache
-            #  - generates backend.tf, provider.tf, dependency data-source files
-            #  - runs 'terraform init' (downloads providers)
-            # Does NOT apply any changes. set -e stops here on failure.
+            # TF_LOG=ERROR: OpenTofu/Terraform writes provider errors (e.g.
+            # "FlowLogAlreadyExists", "AccessDenied") to stderr at ERROR level.
+            # Previously TERRAGRUNT_LOG_LEVEL=error was silencing those lines.
+            # FORWARD_TF_STDOUT: eliminates Terragrunt's internal pipe (broken-pipe fix).
+            TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
-            TERRAGRUNT_LOG_LEVEL=error \
             terragrunt init -input=false
 
             # Locate the cache directory Terragrunt just populated
@@ -1508,18 +1489,13 @@ jobs:
               -maxdepth 7 -name "main.tf" ! -path '*/.terraform/*' \
               2>/dev/null | head -1 | xargs -r dirname)
 
-            if [ -z "$CACHE_DIR" ]; then
-              echo "FATAL: .terragrunt-cache not found for $MODULE_NAME after init"
-              exit 1
-            fi
+            [ -z "$CACHE_DIR" ] && { echo "FATAL: cache not found for $MODULE_NAME"; exit 1; }
             echo "[apply_module] cache_dir=$CACHE_DIR"
 
-            echo "=== [$MODULE_NAME] apply (direct terraform) ==="
-            # Direct 'terraform apply' — bypasses Terragrunt wrapper entirely:
-            #   * No Terragrunt internal pipe → no broken-pipe / output truncation
-            #   * Full unfiltered stdout/stderr → REAL error visible in CI log
-            #   * No cascade dependency noise ([database]/[compute]/[storage])
-            #   * set -e stops the pipeline on failure with the full error shown
+            echo "=== [$MODULE_NAME] apply ==="
+            # Direct terraform/tofu apply: full output, no Terragrunt wrapper,
+            # no broken-pipe, no cascade noise. TF_LOG=ERROR shows provider errors.
+            TF_LOG=ERROR \
             terraform -chdir="$CACHE_DIR" apply \
               -auto-approve \
               -input=false \
