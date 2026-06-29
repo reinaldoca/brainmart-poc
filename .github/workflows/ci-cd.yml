@@ -519,6 +519,7 @@ jobs:
         # continue-on-error removed: bootstrap-infra guarantees backend exists
         run: |
           cd infrastructure/environments/${{ matrix.environment }}
+          TERRAGRUNT_NON_INTERACTIVE=true \
           terragrunt run-all init \
             --terragrunt-parallelism 1
 
@@ -527,6 +528,7 @@ jobs:
         # continue-on-error removed: plan failure must block deploy
         run: |
           cd infrastructure/environments/${{ matrix.environment }}
+          TERRAGRUNT_NON_INTERACTIVE=true \
           terragrunt run-all plan \
             -lock=false \
             -out=tfplan.binary \
@@ -892,6 +894,7 @@ jobs:
             # FORWARD_TF_STDOUT: eliminates Terragrunt's internal pipe (broken-pipe fix).
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
+            TERRAGRUNT_NON_INTERACTIVE=true \
             terragrunt init -input=false
 
             # Locate the cache directory Terragrunt just populated
@@ -1116,6 +1119,7 @@ jobs:
           cd "$NET_DIR"
           TF_LOG=ERROR \
           TERRAGRUNT_FORWARD_TF_STDOUT=true \
+          TERRAGRUNT_NON_INTERACTIVE=true \
           terragrunt init -input=false
 
           NET_CACHE=$(find "$NET_DIR/.terragrunt-cache" \
@@ -1250,6 +1254,7 @@ jobs:
             # FORWARD_TF_STDOUT: eliminates Terragrunt's internal pipe (broken-pipe fix).
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
+            TERRAGRUNT_NON_INTERACTIVE=true \
             terragrunt init -input=false
 
             # Locate the cache directory Terragrunt just populated
@@ -1423,6 +1428,7 @@ jobs:
             # FORWARD_TF_STDOUT: eliminates Terragrunt's internal pipe (broken-pipe fix).
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
+            TERRAGRUNT_NON_INTERACTIVE=true \
             terragrunt init -input=false
 
             # Locate the cache directory Terragrunt just populated
@@ -1494,6 +1500,7 @@ jobs:
             # FORWARD_TF_STDOUT: eliminates Terragrunt's internal pipe (broken-pipe fix).
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
+            TERRAGRUNT_NON_INTERACTIVE=true \
             terragrunt init -input=false
 
             # Locate the cache directory Terragrunt just populated
