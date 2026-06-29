@@ -1102,58 +1102,70 @@ jobs:
           # 2. import orphaned resources (exist in AWS, missing from state after broken-pipe)
           # 3. fix missing outputs in state
           # 4. apply  → with state already up to date, plan = 0 or very few resources
-          # -- DEV: pre-flight cleanup (orphaned resources not in state) -------
-          # aws_flow_log.main[0] is orphaned when it exists in AWS from a prior
-          # broken-pipe run but is absent from Terraform state.  Terraform tries
-          # to create it, AWS returns 'FlowLogAlreadyExists', apply fails.
-          # Fix: detect + DELETE before apply so Terraform recreates it cleanly.
-          # set -e is active: any failure stops the pipeline immediately.
-          # --------------------------------------------------------------------
-          echo "=== [preflight] checking for orphaned network resources ==="
+          # -- DEV network: init, import orphaned flow log, apply
+          # Root cause confirmed from CI log 00:45:48:
+          #   enable_flow_logs=false -> Terraform plans DESTROY of IAM role
+          #   while the flow log in AWS still references it -> AWS rejects -> exit 1
+          #   Real root cause: aws_flow_log.main[0] exists in AWS but not in state.
+          # Fix: init -> import existing flow log into state -> apply sees 0 changes.
+          # -----------------------------------------------------------------------
 
-          _ACCT=$(aws sts get-caller-identity --query Account --output text)
-          _BKT="brainmart-tfstate-${_ACCT}-us-east-1"
+          NET_DIR="$GITHUB_WORKSPACE/infrastructure/environments/dev/network"
 
-          VPC_ID=$(aws ec2 describe-vpcs \
-            --filters "Name=tag:Name,Values=brainmart-dev-vpc" \
-            --query "Vpcs[0].VpcId" --output text --region us-east-1 2>/dev/null)
-          [ "$VPC_ID" = "None" ] && VPC_ID=""
-          echo "[preflight] VPC_ID=${VPC_ID:-<not created yet>}"
+          echo "=== [network] init ==="
+          cd "$NET_DIR"
+          TF_LOG=ERROR \
+          TERRAGRUNT_FORWARD_TF_STDOUT=true \
+          terragrunt init -input=false
 
-          if [ -n "$VPC_ID" ]; then
-            aws s3 cp "s3://${_BKT}/environments/dev/network/terraform.tfstate" \
-              /tmp/net-preflight.json 2>/dev/null \
-              || printf '{"resources":[]}' > /tmp/net-preflight.json
+          NET_CACHE=$(find "$NET_DIR/.terragrunt-cache" \
+            -maxdepth 7 -name "main.tf" ! -path "*/.terraform/*" \
+            2>/dev/null | head -1 | xargs -r dirname)
+          [ -z "$NET_CACHE" ] && { echo "FATAL: network cache not found"; exit 1; }
+          echo "[network] cache_dir=$NET_CACHE"
 
-            # Flow log: delete from AWS if it exists there but not in state
-            FL_STATE=$(jq -r '.resources[]? | select(.type=="aws_flow_log" and .name=="main") | .instances[0].attributes.id // empty' \
-              /tmp/net-preflight.json 2>/dev/null)
+          # Import aws_flow_log.main[0] if it exists in AWS but not in state.
+          # (state was not saved on prior runs due to broken-pipe)
+          FL_IN_STATE=$(TF_LOG="" terraform -chdir="$NET_CACHE" \
+            state list 2>/dev/null | grep "aws_flow_log.main" || true)
 
-            if [ -z "$FL_STATE" ]; then
-              FL_AWS=$(aws ec2 describe-flow-logs \
+          if [ -z "$FL_IN_STATE" ]; then
+            echo "[network] Flow log not in state. Querying AWS..."
+            VPC_ID=$(aws ec2 describe-vpcs \
+              --filters "Name=tag:Name,Values=brainmart-dev-vpc" \
+              --query "Vpcs[0].VpcId" --output text --region us-east-1 2>/dev/null)
+            [ "$VPC_ID" = "None" ] && VPC_ID=""
+            echo "[network] VPC=${VPC_ID:-<not yet created>}"
+
+            if [ -n "$VPC_ID" ]; then
+              FL_ID=$(aws ec2 describe-flow-logs \
                 --filter "Name=resource-id,Values=${VPC_ID}" \
                          "Name=log-destination-type,Values=cloud-watch-logs" \
-                --query  "FlowLogs[0].FlowLogId" --output text \
+                --query "FlowLogs[0].FlowLogId" --output text \
                 --region us-east-1 2>/dev/null)
-              [ "$FL_AWS" = "None" ] && FL_AWS=""
+              [ "$FL_ID" = "None" ] && FL_ID=""
+              echo "[network] Flow log in AWS: ${FL_ID:-<none>}"
 
-              if [ -n "$FL_AWS" ]; then
-                echo "[preflight] Orphaned flow log ${FL_AWS} (in AWS, not in state). Deleting..."
-                aws ec2 delete-flow-logs --flow-log-ids "$FL_AWS" --region us-east-1
-                echo "[preflight] Flow log deleted. Terraform will recreate it."
+              if [ -n "$FL_ID" ]; then
+                echo "[network] Importing $FL_ID into state (enable_flow_logs=true, count=1)..."
+                TF_LOG=ERROR terraform -chdir="$NET_CACHE" import \
+                  -input=false -lock=false \
+                  "aws_flow_log.main[0]" "$FL_ID"
+                echo "[network] Import done. Apply will show 0 changes for flow log."
               else
-                echo "[preflight] No orphaned flow log. OK."
+                echo "[network] No flow log in AWS. Terraform will create it cleanly."
               fi
-            else
-              echo "[preflight] Flow log ${FL_STATE} already in state. OK."
             fi
+          else
+            echo "[network] Flow log already in state: $FL_IN_STATE"
           fi
 
-          # Fix missing outputs in S3 state (e.g. rds_security_group_id)
           fix_network_state "dev" "brainmart-dev"
 
-          # Apply all DEV modules - set -e stops pipeline on first failure
-          apply_module infrastructure/environments/dev/network
+          echo "=== [network] apply ==="
+          TF_LOG=ERROR terraform -chdir="$NET_CACHE" apply \
+            -auto-approve -input=false -lock=false
+
           apply_module infrastructure/environments/dev/database
           apply_module infrastructure/environments/dev/storage
           apply_module infrastructure/environments/dev/compute

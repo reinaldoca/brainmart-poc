@@ -94,13 +94,8 @@ inputs = {
     dynamodb = true  # Para que Lambda acceda a DynamoDB (si aplica)
   }
 
-  # ⚠️  TEMPORARILY DISABLED while diagnosing aws_flow_log creation error.
-  # The flow log resource fails every CI run with exit status 1 but the
-  # actual error is never visible in the log.  Re-enable once fixed.
-  # TODO: re-enable after diagnosing root cause locally:
-  #   cd infrastructure/environments/dev/network
-  #   TF_LOG=ERROR tofu apply -auto-approve -lock=false 2>&1 | grep -iE 'Error|error'
-  enable_flow_logs            = false
+  # VPC Flow Logs
+  enable_flow_logs            = true
   flow_logs_retention_in_days = 90  # 90 días en dev (7 años en prod)
 
   # ?? DNS ??
