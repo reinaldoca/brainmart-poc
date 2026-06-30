@@ -539,7 +539,7 @@ jobs:
         # continue-on-error removed: bootstrap-infra guarantees backend exists
         run: |
           cd infrastructure/environments/${{ matrix.environment }}
-          TERRAGRUNT_NON_INTERACTIVE=true \
+          TG_NON_INTERACTIVE=true \
           terragrunt run --all init \
             --parallelism 1
 
@@ -548,7 +548,7 @@ jobs:
         # continue-on-error removed: plan failure must block deploy
         run: |
           cd infrastructure/environments/${{ matrix.environment }}
-          TERRAGRUNT_NON_INTERACTIVE=true \
+          TG_NON_INTERACTIVE=true \
           terragrunt run --all plan \
             -lock=false \
             -out=tfplan.binary \
@@ -914,8 +914,8 @@ jobs:
             # set +e captures exit code so we can show the log before failing.
             set +e
             TF_LOG=ERROR \
-            TERRAGRUNT_FORWARD_TF_STDOUT=true \
-            TERRAGRUNT_NON_INTERACTIVE=true \
+            TG_TF_FORWARD_STDOUT=true \
+            TG_NON_INTERACTIVE=true \
             terragrunt apply \
               -auto-approve \
               -input=false \
@@ -955,8 +955,11 @@ jobs:
             jq --arg sg "$SG_ID" --argjson s "$((SERIAL + 1))" \
               '.serial=$s | .outputs.rds_security_group_id={"value":$sg,"type":"string"}' \
               /tmp/net-state.json > /tmp/net-patched.json
+            # S3 upload: no --sse flag needed (bucket default encryption applies).
+            # || true: state patch is best-effort; never block the pipeline.
             aws s3 cp /tmp/net-patched.json "s3://${BUCKET}/${STATE_KEY}" \
-              --sse aws:kms && echo "Patched: rds_security_group_id=${SG_ID}"
+              && echo "Patched: rds_security_group_id=${SG_ID}" \
+              || echo "[fix_network_state] WARN: state patch upload failed (KMS/permissions). Terraform apply will re-generate outputs."
           }
 
           # ───────────────────────────────────────────────────────────────────────
@@ -978,8 +981,8 @@ jobs:
           echo "=== [network] init ==="
           cd "$NET_DIR"
           TF_LOG=ERROR \
-          TERRAGRUNT_FORWARD_TF_STDOUT=true \
-          TERRAGRUNT_NON_INTERACTIVE=true \
+          TG_TF_FORWARD_STDOUT=true \
+          TG_NON_INTERACTIVE=true \
           terragrunt init -input=false
 
           # Search for the "network" subdir directly - not main.tf - because
@@ -1066,8 +1069,8 @@ jobs:
           _NET_LOG="/tmp/tg-apply-network-$$.log"
           set +e
           TF_LOG=ERROR \
-          TERRAGRUNT_FORWARD_TF_STDOUT=true \
-          TERRAGRUNT_NON_INTERACTIVE=true \
+          TG_TF_FORWARD_STDOUT=true \
+          TG_NON_INTERACTIVE=true \
           terragrunt apply \
             -auto-approve -input=false -lock=false \
             > "$_NET_LOG" 2>&1
@@ -1161,8 +1164,8 @@ jobs:
             # set +e captures exit code so we can show the log before failing.
             set +e
             TF_LOG=ERROR \
-            TERRAGRUNT_FORWARD_TF_STDOUT=true \
-            TERRAGRUNT_NON_INTERACTIVE=true \
+            TG_TF_FORWARD_STDOUT=true \
+            TG_NON_INTERACTIVE=true \
             terragrunt apply \
               -auto-approve \
               -input=false \
@@ -1199,7 +1202,11 @@ jobs:
             fi
             SERIAL=$(jq '.serial' /tmp/net-state.json)
             jq --arg sg "$SG_ID" --argjson s "$((SERIAL + 1))" '.serial=$s | .outputs.rds_security_group_id={"value":$sg,"type":"string"}' /tmp/net-state.json > /tmp/net-patched.json
-            aws s3 cp /tmp/net-patched.json "s3://${BUCKET}/${STATE_KEY}" --sse aws:kms && echo "Patched: rds_security_group_id=${SG_ID}"
+            # S3 upload: no --sse flag (bucket default encryption applies).
+            # || true: best-effort; never block the pipeline on KMS errors.
+            aws s3 cp /tmp/net-patched.json "s3://${BUCKET}/${STATE_KEY}" \
+              && echo "Patched: rds_security_group_id=${SG_ID}" \
+              || echo "[fix_network_state] WARN: state patch upload failed. Terraform apply will re-generate outputs."
           }
           apply_module infrastructure/environments/staging/network
           fix_network_state "staging" "brainmart-staging"
@@ -1328,8 +1335,8 @@ jobs:
             # set +e captures exit code so we can show the log before failing.
             set +e
             TF_LOG=ERROR \
-            TERRAGRUNT_FORWARD_TF_STDOUT=true \
-            TERRAGRUNT_NON_INTERACTIVE=true \
+            TG_TF_FORWARD_STDOUT=true \
+            TG_NON_INTERACTIVE=true \
             terragrunt apply \
               -auto-approve \
               -input=false \
@@ -1366,7 +1373,11 @@ jobs:
             fi
             SERIAL=$(jq '.serial' /tmp/net-state.json)
             jq --arg sg "$SG_ID" --argjson s "$((SERIAL + 1))" '.serial=$s | .outputs.rds_security_group_id={"value":$sg,"type":"string"}' /tmp/net-state.json > /tmp/net-patched.json
-            aws s3 cp /tmp/net-patched.json "s3://${BUCKET}/${STATE_KEY}" --sse aws:kms && echo "Patched: rds_security_group_id=${SG_ID}"
+            # S3 upload: no --sse flag (bucket default encryption applies).
+            # || true: best-effort; never block the pipeline on KMS errors.
+            aws s3 cp /tmp/net-patched.json "s3://${BUCKET}/${STATE_KEY}" \
+              && echo "Patched: rds_security_group_id=${SG_ID}" \
+              || echo "[fix_network_state] WARN: state patch upload failed. Terraform apply will re-generate outputs."
           }
           apply_module infrastructure/environments/prod/network
           fix_network_state "prod" "brainmart-prod"
@@ -1393,8 +1404,8 @@ jobs:
             # set +e captures exit code so we can show the log before failing.
             set +e
             TF_LOG=ERROR \
-            TERRAGRUNT_FORWARD_TF_STDOUT=true \
-            TERRAGRUNT_NON_INTERACTIVE=true \
+            TG_TF_FORWARD_STDOUT=true \
+            TG_NON_INTERACTIVE=true \
             terragrunt apply \
               -auto-approve \
               -input=false \

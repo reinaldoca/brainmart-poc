@@ -78,8 +78,9 @@ remote_state {
 
     region = local.aws_region
 
-    # DynamoDB para locking: evita corrupciones de estado en deploys paralelos
-    dynamodb_table = "brainmart-tfstate-lock"
+    # Terraform 1.10+: use_lockfile reemplaza dynamodb_table para locking.
+    # El lockfile se guarda junto al state en S3 (no requiere DynamoDB).
+    use_lockfile = true
 
     # CRI?TICO: el estado de Terraform contiene informacio?n sensible
     # (connection strings, ARNs, etc.) ? DEBE estar cifrado
