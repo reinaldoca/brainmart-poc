@@ -889,23 +889,28 @@ jobs:
             local MODULE=$1
             local MODULE_NAME="${MODULE##*/}"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
+            local LOG="/tmp/tg-apply-${MODULE_NAME}-$$.log"
 
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
 
-            # Use 'terragrunt apply': Terragrunt injects inputs{} as TF_VAR_* env vars.
-            # trap '' PIPE sets SIGPIPE=SIG_IGN, inherited via fork+exec into
-            # Terragrunt->Terraform. Prevents broken pipe/exit 255 when CI log pipe closes.
-            trap "" PIPE
+            # Redirect stdout+stderr to a regular file: regular files never
+            # generate SIGPIPE, so the Go runtime in Terragrunt/Terraform cannot
+            # be killed by a broken GitHub Actions log pipe (exit 255).
+            # set +e captures exit code so we can show the log before failing.
+            set +e
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_NON_INTERACTIVE=true \
             terragrunt apply \
               -auto-approve \
               -input=false \
-              -lock=false
+              -lock=false \
+              > "$LOG" 2>&1
             local RET=$?
-            trap - PIPE
+            set -e
+            cat "$LOG" || true
+            rm -f "$LOG"
             return $RET
           }
 
@@ -1044,13 +1049,19 @@ jobs:
 
           echo "=== [network] apply ==="
           cd "$NET_DIR"
-          trap "" PIPE
+          _NET_LOG="/tmp/tg-apply-network-$$.log"
+          set +e
           TF_LOG=ERROR \
           TERRAGRUNT_FORWARD_TF_STDOUT=true \
           TERRAGRUNT_NON_INTERACTIVE=true \
           terragrunt apply \
-            -auto-approve -input=false -lock=false
-          trap - PIPE
+            -auto-approve -input=false -lock=false \
+            > "$_NET_LOG" 2>&1
+          _NET_EXIT=$?
+          set -e
+          cat "$_NET_LOG" || true
+          rm -f "$_NET_LOG"
+          [ "$_NET_EXIT" -ne 0 ] && exit "$_NET_EXIT"
 
           apply_module infrastructure/environments/dev/database
           apply_module infrastructure/environments/dev/storage
@@ -1129,19 +1140,23 @@ jobs:
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
 
-            # Use 'terragrunt apply': injects inputs{} as TF_VAR_*.
-            # trap '' PIPE: SIGPIPE=SIG_IGN inherited by Terragrunt->Terraform.
-            # Prevents broken pipe/exit 255 when CI log pipe closes.
-            trap "" PIPE
+            # Redirect stdout+stderr to a regular file: regular files never
+            # generate SIGPIPE, so the Go runtime in Terragrunt/Terraform cannot
+            # be killed by a broken GitHub Actions log pipe (exit 255).
+            # set +e captures exit code so we can show the log before failing.
+            set +e
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_NON_INTERACTIVE=true \
             terragrunt apply \
               -auto-approve \
               -input=false \
-              -lock=false
+              -lock=false \
+              > "$LOG" 2>&1
             local RET=$?
-            trap - PIPE
+            set -e
+            cat "$LOG" || true
+            rm -f "$LOG"
             return $RET
           }
 
@@ -1291,19 +1306,23 @@ jobs:
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
 
-            # Use 'terragrunt apply': injects inputs{} as TF_VAR_*.
-            # trap '' PIPE: SIGPIPE=SIG_IGN inherited by Terragrunt->Terraform.
-            # Prevents broken pipe/exit 255 when CI log pipe closes.
-            trap "" PIPE
+            # Redirect stdout+stderr to a regular file: regular files never
+            # generate SIGPIPE, so the Go runtime in Terragrunt/Terraform cannot
+            # be killed by a broken GitHub Actions log pipe (exit 255).
+            # set +e captures exit code so we can show the log before failing.
+            set +e
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_NON_INTERACTIVE=true \
             terragrunt apply \
               -auto-approve \
               -input=false \
-              -lock=false
+              -lock=false \
+              > "$LOG" 2>&1
             local RET=$?
-            trap - PIPE
+            set -e
+            cat "$LOG" || true
+            rm -f "$LOG"
             return $RET
           }
 
@@ -1351,19 +1370,23 @@ jobs:
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
 
-            # Use 'terragrunt apply': injects inputs{} as TF_VAR_*.
-            # trap '' PIPE: SIGPIPE=SIG_IGN inherited by Terragrunt->Terraform.
-            # Prevents broken pipe/exit 255 when CI log pipe closes.
-            trap "" PIPE
+            # Redirect stdout+stderr to a regular file: regular files never
+            # generate SIGPIPE, so the Go runtime in Terragrunt/Terraform cannot
+            # be killed by a broken GitHub Actions log pipe (exit 255).
+            # set +e captures exit code so we can show the log before failing.
+            set +e
             TF_LOG=ERROR \
             TERRAGRUNT_FORWARD_TF_STDOUT=true \
             TERRAGRUNT_NON_INTERACTIVE=true \
             terragrunt apply \
               -auto-approve \
               -input=false \
-              -lock=false
+              -lock=false \
+              > "$LOG" 2>&1
             local RET=$?
-            trap - PIPE
+            set -e
+            cat "$LOG" || true
+            rm -f "$LOG"
             return $RET
           }
 
