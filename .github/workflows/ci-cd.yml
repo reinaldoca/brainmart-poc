@@ -929,37 +929,51 @@ jobs:
           }
 
           fix_network_state() {
+            # NOTE: called under 'set +e' - all internal failures must be explicit.
             local ENV=$1 PREFIX=$2 REGION="us-east-1"
-            local ACCOUNT_ID
-            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            local ACCOUNT_ID SG_ID SERIAL
+
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) || {
+              echo "[fix_network_state] WARN: cannot get account id, skipping."; return 0
+            }
             local BUCKET="brainmart-tfstate-${ACCOUNT_ID}-${REGION}"
             local STATE_KEY="environments/${ENV}/network/terraform.tfstate"
             echo "Checking s3://${BUCKET}/${STATE_KEY} for rds_security_group_id..."
+
             if ! aws s3 cp "s3://${BUCKET}/${STATE_KEY}" /tmp/net-state.json 2>/dev/null; then
               echo "State not in S3 yet. terraform apply will create it."; return 0
             fi
+
             if jq -e '.outputs.rds_security_group_id.value' /tmp/net-state.json > /dev/null 2>&1; then
               echo "OK: rds_security_group_id present."; return 0
             fi
+
+            # Try to get SG ID from the state JSON first
             SG_ID=$(jq -r '.resources[]? | select(.type=="aws_security_group" and .name=="rds") | .instances[0]?.attributes.id // empty' /tmp/net-state.json 2>/dev/null)
+
             if [ -z "$SG_ID" ]; then
+              # Not in state - check AWS directly (best-effort, may fail with AccessDenied)
               SG_ID=$(aws ec2 describe-security-groups \
                 --filters "Name=group-name,Values=${PREFIX}-rds-sg" \
                 --region "$REGION" \
-                --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
+                --query "SecurityGroups[0].GroupId" --output text 2>/dev/null) || SG_ID=""
               [ "$SG_ID" = "None" ] && SG_ID=""
-              [ -n "$SG_ID" ] && aws ec2 delete-security-group --group-id "$SG_ID" --region "$REGION" 2>/dev/null || true
+              if [ -n "$SG_ID" ]; then
+                aws ec2 delete-security-group --group-id "$SG_ID" --region "$REGION" 2>/dev/null || true
+              fi
               return 0
             fi
-            SERIAL=$(jq '.serial' /tmp/net-state.json)
+
+            # Patch state to add missing rds_security_group_id output
+            SERIAL=$(jq '.serial // 0' /tmp/net-state.json)
             jq --arg sg "$SG_ID" --argjson s "$((SERIAL + 1))" \
               '.serial=$s | .outputs.rds_security_group_id={"value":$sg,"type":"string"}' \
-              /tmp/net-state.json > /tmp/net-patched.json
-            # S3 upload: no --sse flag needed (bucket default encryption applies).
-            # || true: state patch is best-effort; never block the pipeline.
-            aws s3 cp /tmp/net-patched.json "s3://${BUCKET}/${STATE_KEY}" \
+              /tmp/net-state.json > /tmp/net-patched.json || { echo "[fix_network_state] WARN: jq patch failed."; return 0; }
+
+            # S3 upload: best-effort, bucket default encryption applies (no --sse flag).
+            aws s3 cp /tmp/net-patched.json "s3://${BUCKET}/${STATE_KEY}" 2>/dev/null \
               && echo "Patched: rds_security_group_id=${SG_ID}" \
-              || echo "[fix_network_state] WARN: state patch upload failed (KMS/permissions). Terraform apply will re-generate outputs."
+              || echo "[fix_network_state] WARN: state patch upload failed. Terraform apply will re-generate outputs."
           }
 
           # ───────────────────────────────────────────────────────────────────────
@@ -1062,7 +1076,11 @@ jobs:
           set -e
           # -----------------------------------------------------------------------
 
+          # fix_network_state is best-effort: run with set +e so any internal
+          # AWS CLI AccessDenied (exit 254) or other error does NOT abort the step.
+          set +e
           fix_network_state "dev" "brainmart-dev"
+          set -e
 
           echo "=== [network] apply ==="
           cd "$NET_DIR"
@@ -1209,7 +1227,9 @@ jobs:
               || echo "[fix_network_state] WARN: state patch upload failed. Terraform apply will re-generate outputs."
           }
           apply_module infrastructure/environments/staging/network
+          set +e
           fix_network_state "staging" "brainmart-staging"
+          set -e
           apply_module infrastructure/environments/staging/network
           apply_module infrastructure/environments/staging/database
           apply_module infrastructure/environments/staging/storage
@@ -1380,7 +1400,9 @@ jobs:
               || echo "[fix_network_state] WARN: state patch upload failed. Terraform apply will re-generate outputs."
           }
           apply_module infrastructure/environments/prod/network
+          set +e
           fix_network_state "prod" "brainmart-prod"
+          set -e
           apply_module infrastructure/environments/prod/network
           apply_module infrastructure/environments/prod/database
           apply_module infrastructure/environments/prod/storage
