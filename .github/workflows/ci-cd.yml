@@ -1136,6 +1136,7 @@ jobs:
             local MODULE=$1
             local MODULE_NAME="${MODULE##*/}"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
+            local LOG="/tmp/tg-apply-${MODULE_NAME}-$$.log"
 
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
@@ -1302,6 +1303,7 @@ jobs:
             local MODULE=$1
             local MODULE_NAME="${MODULE##*/}"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
+            local LOG="/tmp/tg-apply-${MODULE_NAME}-$$.log"
 
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
@@ -1366,6 +1368,7 @@ jobs:
             local MODULE=$1
             local MODULE_NAME="${MODULE##*/}"
             local MODULE_DIR="$GITHUB_WORKSPACE/$MODULE"
+            local LOG="/tmp/tg-apply-${MODULE_NAME}-$$.log"
 
             echo "=== [$MODULE_NAME] apply ==="
             cd "$MODULE_DIR"
