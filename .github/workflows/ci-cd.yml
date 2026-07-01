@@ -20,7 +20,7 @@
 #   - OWASP: testing de seguridad antes de produccion
 #                                                                               
 
-name: " Brainmart CI/CD Pipeline"
+name: "Brainmart CI/CD Pipeline"
 
 on:
   push:
@@ -191,30 +191,7 @@ jobs:
 
           # Crear un plan JSON de ejemplo para validar las politicas Rego
           # En el pipeline real, este JSON viene del terragrunt plan
-          printf '%s' '{
-  "format_version": "1.2",
-  "resource_changes": [{
-    "address": "aws_db_instance.main",
-    "type": "aws_db_instance",
-    "change": {
-      "actions": ["create"],
-      "after": {
-        "identifier": "brainmart-dev-rds-postgres",
-        "instance_class": "db.t3.medium",
-        "multi_az": false,
-        "storage_encrypted": true,
-        "backup_retention_period": 7,
-        "deletion_protection": false,
-        "tags": {
-          "Environment": "dev",
-          "Project": "brainmart",
-          "Owner": "devsecops-team@brainmart.health",
-          "ComplianceLevel": "FDA-21CFR11-GCP-ALCOA-GDPR"
-        }
-      }
-    }
-  }]
-}' > /tmp/mock-tfplan.json
+          printf '%s' '{"format_version":"1.2","resource_changes":[{"address":"aws_db_instance.main","type":"aws_db_instance","change":{"actions":["create"],"after":{"identifier":"brainmart-dev-rds-postgres","instance_class":"db.t3.medium","multi_az":false,"storage_encrypted":true,"backup_retention_period":7,"deletion_protection":false,"tags":{"Environment":"dev","Project":"brainmart","Owner":"devsecops-team@brainmart.health","ComplianceLevel":"FDA-21CFR11-GCP-ALCOA-GDPR"}}}}]}' > /tmp/mock-tfplan.json
 
           # Run conftest - tee output so violations appear in log AND Step Summary
           conftest test /tmp/mock-tfplan.json \
@@ -1076,19 +1053,7 @@ jobs:
           # Write var-file with all required (no-default) variables for the
           # network module. terraform import needs these to evaluate the config.
           # Using printf instead of heredoc to avoid YAML indentation conflicts.
-          printf '%s' '{
-  "environment": "dev",
-  "name_prefix": "brainmart-dev",
-  "vpc_cidr": "10.10.0.0/16",
-  "availability_zones": ["us-east-1a","us-east-1b"],
-  "public_subnet_cidrs": ["10.10.0.0/24","10.10.1.0/24"],
-  "private_subnet_cidrs": ["10.10.10.0/24","10.10.11.0/24"],
-  "isolated_subnet_cidrs": ["10.10.20.0/24","10.10.21.0/24"],
-  "vpc_endpoints": {
-    "secrets_manager":true,"ecr_api":true,"ecr_dkr":true,
-    "logs":true,"s3":true,"dynamodb":true
-  }
-}' > /tmp/dev-network-import-vars.json
+          printf '%s' '{"environment":"dev","name_prefix":"brainmart-dev","vpc_cidr":"10.10.0.0/16","availability_zones":["us-east-1a","us-east-1b"],"public_subnet_cidrs":["10.10.0.0/24","10.10.1.0/24"],"private_subnet_cidrs":["10.10.10.0/24","10.10.11.0/24"],"isolated_subnet_cidrs":["10.10.20.0/24","10.10.21.0/24"],"vpc_endpoints":{"secrets_manager":true,"ecr_api":true,"ecr_dkr":true,"logs":true,"s3":true,"dynamodb":true}}' > /tmp/dev-network-import-vars.json
           echo "[network] import var-file written."
           echo "[network] _AKI set: $([ -n "$_AKI" ] && echo YES || echo NO)"
           echo "[network] VPC_ID: ${VPC_ID:-<empty>}"
