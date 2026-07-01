@@ -1089,10 +1089,12 @@ jobs:
           if [ -n "$_AKI" ] && [ -n "$VPC_ID" ]; then
             _try_import_sg() {
               local TF_ADDR=$1 SG_NAME=$2 SG_ID
+              # Check state (terraform can read S3 with CI role credentials)
               if TF_LOG="" terraform -chdir="$NET_CACHE" state list 2>/dev/null | grep -qF "$TF_ADDR"; then
                 echo "[network] $TF_ADDR already in state, skipping."
                 return 0
               fi
+              # Describe SG in AWS using the assumed role (CI role lacks ec2:Describe)
               SG_ID=$(AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
                 aws ec2 describe-security-groups \
                   --filters "Name=vpc-id,Values=${VPC_ID}" "Name=group-name,Values=${SG_NAME}" \
@@ -1101,8 +1103,14 @@ jobs:
               [ "$SG_ID" = "None" ] && SG_ID=""
               if [ -n "$SG_ID" ]; then
                 echo "[network] Importing $TF_ADDR ($SG_ID) ..."
-                TF_LOG=ERROR terraform -chdir="$NET_CACHE" import \
-                  -input=false -lock=false "$TF_ADDR" "$SG_ID"
+                # MUST use 'terragrunt run -- import', NOT 'terraform import'.
+                # Reason: 'terraform import' runs without TF_VAR_* variables
+                # (name_prefix, vpc_cidr, etc.) which are injected by Terragrunt
+                # from the inputs{} block. Without them Terraform exits
+                # "No value for required variable" - silently under set +e -
+                # and the SG is never imported, causing InvalidGroup.Duplicate.
+                (cd "$NET_DIR" && TF_LOG=ERROR TG_NON_INTERACTIVE=true \
+                  terragrunt run -- import -input=false -lock=false "$TF_ADDR" "$SG_ID")
                 echo "[network] SG import exit: $?"
               else
                 echo "[network] $SG_NAME not in AWS, Terraform will create it."
