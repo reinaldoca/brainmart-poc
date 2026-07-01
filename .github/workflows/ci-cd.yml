@@ -540,8 +540,7 @@ jobs:
         run: |
           cd infrastructure/environments/${{ matrix.environment }}
           TG_NON_INTERACTIVE=true \
-          terragrunt run --all init \
-            --parallelism 1
+          terragrunt run --all --parallelism 1 -- init
 
       - name: Terragrunt Plan
         id: plan
@@ -549,7 +548,7 @@ jobs:
         run: |
           cd infrastructure/environments/${{ matrix.environment }}
           TG_NON_INTERACTIVE=true \
-          terragrunt run --all plan \
+          terragrunt run --all -- plan \
             -lock=false \
             -out=tfplan.binary \
             2>&1 | tee plan-output.txt
