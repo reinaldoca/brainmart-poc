@@ -849,6 +849,19 @@ jobs:
           role-session-name: Deploy-DEV-${{ github.sha }}
           aws-region: us-east-1
 
+      # Assume BrainmartTerragruntRole via role-chaining (GitHubActionsRole -> BrainmartTerragruntRole).
+      # This is the same role Terragrunt uses (provider.tf assume_role + external_id).
+      # Required so the SG import/delete EC2 operations in the next step
+      # have ec2:Describe*, ec2:Delete* permissions that GitHubActionsRole lacks.
+      - name: Assume BrainmartTerragruntRole (EC2 + Terraform import permissions)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}:role/BrainmartTerragruntRole
+          role-external-id: brainmart-terragrunt-${{ vars.AWS_SHARED_SERVICES_ACCOUNT_ID }}
+          role-chaining: true
+          role-session-name: Deploy-DEV-import-${{ github.sha }}
+          aws-region: us-east-1
+
       - name:  Terragrunt Apply - DEV
         # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
@@ -973,51 +986,31 @@ jobs:
             state list 2>/dev/null | grep "aws_flow_log.main" || echo "")
           echo "[network] Flow log in state: ${FL_IN_STATE:-<none>}"
 
-          # Always assume BrainmartTerragruntRole for all EC2/import queries.
-          # Runs unconditionally so SG imports are not skipped when flow log
-          # is already in state from a previous run.
+          # BrainmartTerragruntRole is already set as ambient credentials by the
+          # preceding 'Assume BrainmartTerragruntRole' step (role-chaining via OIDC).
+          # No internal assume-role needed: all EC2 calls use ambient credentials.
           _ACCT=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
           echo "[network] account: ${_ACCT:-<unknown>}"
-          _AKI="" _SAK="" _STK="" VPC_ID=""
+          echo "[network] caller: $(aws sts get-caller-identity --query Arn --output text 2>/dev/null)"
+          VPC_ID=""
 
-          if [ -n "$_ACCT" ]; then
-            _CREDS=$(aws sts assume-role \
-              --role-arn "arn:aws:iam::${_ACCT}:role/BrainmartTerragruntRole" \
-              --role-session-name "ci-network-imports" \
-              --external-id "brainmart-terragrunt-${_ACCT}" \
-              --query Credentials --output json 2>&1)
-            echo "[network] assume-role: $(echo $_CREDS | head -c 60)"
+          # VPC lookup: tag first, then state fallback
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=brainmart-dev-vpc" \
+            --query "Vpcs[0].VpcId" --output text --region us-east-1 2>/dev/null) || VPC_ID=""
+          [ "$VPC_ID" = "None" ] && VPC_ID=""
 
-            _AKI=$(echo "$_CREDS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['AccessKeyId'])" 2>/dev/null)
-            _SAK=$(echo "$_CREDS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['SecretAccessKey'])" 2>/dev/null)
-            _STK=$(echo "$_CREDS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['SessionToken'])" 2>/dev/null)
-
-            if [ -n "$_AKI" ]; then
-              echo "[network] BrainmartTerragruntRole assumed OK."
-
-              # VPC lookup: tag first, then state fallback
-              VPC_ID=$(AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
-                aws ec2 describe-vpcs \
-                  --filters "Name=tag:Name,Values=brainmart-dev-vpc" \
-                  --query "Vpcs[0].VpcId" --output text --region us-east-1 2>/dev/null) || VPC_ID=""
-              [ "$VPC_ID" = "None" ] && VPC_ID=""
-
-              if [ -z "$VPC_ID" ]; then
-                VPC_ID=$(TF_LOG="" terraform -chdir="$NET_CACHE" \
-                  state show 'aws_vpc.main' 2>/dev/null \
-                  | grep '^\s*id\s*=' | head -1 | awk -F'"' '{print $2}')
-                [ -n "$VPC_ID" ] && echo "[network] VPC_ID from state: ${VPC_ID}"
-              fi
-              echo "[network] VPC_ID: ${VPC_ID:-<not found>}"
-            else
-              echo "[network] assume-role failed, imports skipped."
-            fi
+          if [ -z "$VPC_ID" ]; then
+            VPC_ID=$(TF_LOG="" terraform -chdir="$NET_CACHE" \
+              state show 'aws_vpc.main' 2>/dev/null \
+              | grep '^\s*id\s*=' | head -1 | awk -F'"' '{print $2}')
+            [ -n "$VPC_ID" ] && echo "[network] VPC_ID from state: ${VPC_ID}"
           fi
+          echo "[network] VPC_ID: ${VPC_ID:-<not found>}"
 
           # ---- Import orphaned aws_flow_log (only if not already in state) ------
-          if [ -z "$FL_IN_STATE" ] && [ -n "$_AKI" ] && [ -n "$VPC_ID" ]; then
-            FL_ID=$(AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
-              aws ec2 describe-flow-logs \
+          if [ -z "$FL_IN_STATE" ] && [ -n "$VPC_ID" ]; then
+            FL_ID=$(aws ec2 describe-flow-logs \
                 --filter "Name=resource-id,Values=${VPC_ID}" \
                          "Name=log-destination-type,Values=cloud-watch-logs" \
                 --query "FlowLogs[0].FlowLogId" --output text \
@@ -1055,10 +1048,9 @@ jobs:
           # Using printf instead of heredoc to avoid YAML indentation conflicts.
           printf '%s' '{"environment":"dev","name_prefix":"brainmart-dev","vpc_cidr":"10.10.0.0/16","availability_zones":["us-east-1a","us-east-1b"],"public_subnet_cidrs":["10.10.0.0/24","10.10.1.0/24"],"private_subnet_cidrs":["10.10.10.0/24","10.10.11.0/24"],"isolated_subnet_cidrs":["10.10.20.0/24","10.10.21.0/24"],"vpc_endpoints":{"secrets_manager":true,"ecr_api":true,"ecr_dkr":true,"logs":true,"s3":true,"dynamodb":true}}' > /tmp/dev-network-import-vars.json
           echo "[network] import var-file written."
-          echo "[network] _AKI set: $([ -n "$_AKI" ] && echo YES || echo NO)"
           echo "[network] VPC_ID: ${VPC_ID:-<empty>}"
 
-          if [ -n "$_AKI" ] && [ -n "$VPC_ID" ]; then
+          if [ -n "$VPC_ID" ]; then
             _import_orphaned_sg() {
               local SG_NAME=$1 TF_ADDR=$2 SG_ID _IMP_EXIT
 
@@ -1071,8 +1063,7 @@ jobs:
               fi
               echo "[network] $TF_ADDR NOT in state."
 
-              SG_ID=$(AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
-                aws ec2 describe-security-groups \
+              SG_ID=$(aws ec2 describe-security-groups \
                   --filters "Name=vpc-id,Values=${VPC_ID}" "Name=group-name,Values=${SG_NAME}" \
                   --query "SecurityGroups[0].GroupId" --output text \
                   --region us-east-1 2>/dev/null) || SG_ID=""
@@ -1102,7 +1093,6 @@ jobs:
 
               # Fallback: import failed - delete SG so Terraform creates it fresh
               echo "[network] WARN: import failed (exit $_IMP_EXIT). Deleting $SG_NAME ($SG_ID) for fresh create..."
-              AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
                 aws ec2 delete-security-group --group-id "$SG_ID" --region us-east-1 2>&1 \
                 && echo "[network] $SG_NAME deleted, Terraform will recreate." \
                 || echo "[network] WARN: delete also failed for $SG_NAME."
