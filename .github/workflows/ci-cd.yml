@@ -1018,98 +1018,103 @@ jobs:
             state list 2>/dev/null | grep "aws_flow_log.main" || echo "")
           echo "[network] Flow log in state: ${FL_IN_STATE:-<none>}"
 
-          if [ -z "$FL_IN_STATE" ]; then
-            echo "[network] Not in state. Assuming BrainmartTerragruntRole for EC2 queries..."
-            _ACCT=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
-            echo "[network] account: ${_ACCT:-<unknown>}"
+          # Always assume BrainmartTerragruntRole for all EC2/import queries.
+          # Runs unconditionally so SG imports are not skipped when flow log
+          # is already in state from a previous run.
+          _ACCT=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
+          echo "[network] account: ${_ACCT:-<unknown>}"
+          _AKI="" _SAK="" _STK="" VPC_ID=""
 
-            if [ -n "$_ACCT" ]; then
-              _CREDS=$(aws sts assume-role \
-                --role-arn "arn:aws:iam::${_ACCT}:role/BrainmartTerragruntRole" \
-                --role-session-name "ci-flow-log-detect" \
-                --external-id "brainmart-terragrunt-${_ACCT}" \
-                --query Credentials --output json 2>&1)
-              echo "[network] assume-role: $(echo $_CREDS | head -c 60)"
+          if [ -n "$_ACCT" ]; then
+            _CREDS=$(aws sts assume-role \
+              --role-arn "arn:aws:iam::${_ACCT}:role/BrainmartTerragruntRole" \
+              --role-session-name "ci-network-imports" \
+              --external-id "brainmart-terragrunt-${_ACCT}" \
+              --query Credentials --output json 2>&1)
+            echo "[network] assume-role: $(echo $_CREDS | head -c 60)"
 
-              _AKI=$(echo "$_CREDS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['AccessKeyId'])" 2>/dev/null)
-              _SAK=$(echo "$_CREDS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['SecretAccessKey'])" 2>/dev/null)
-              _STK=$(echo "$_CREDS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['SessionToken'])" 2>/dev/null)
+            _AKI=$(echo "$_CREDS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['AccessKeyId'])" 2>/dev/null)
+            _SAK=$(echo "$_CREDS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['SecretAccessKey'])" 2>/dev/null)
+            _STK=$(echo "$_CREDS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['SessionToken'])" 2>/dev/null)
 
-              if [ -n "$_AKI" ]; then
-                echo "[network] BrainmartTerragruntRole assumed OK."
-                VPC_ID=$(AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
-                  aws ec2 describe-vpcs \
-                    --filters "Name=tag:Name,Values=brainmart-dev-vpc" \
-                    --query "Vpcs[0].VpcId" --output text --region us-east-1 2>&1)
-                [ "$VPC_ID" = "None" ] && VPC_ID=""
+            if [ -n "$_AKI" ]; then
+              echo "[network] BrainmartTerragruntRole assumed OK."
 
-                # Fallback: get VPC ID from Terraform state (handles broken-pipe
-                # runs where VPC was created without Name tag applied yet)
-                if [ -z "$VPC_ID" ]; then
-                  VPC_ID=$(TF_LOG="" terraform -chdir="$NET_CACHE" \
-                    state show 'aws_vpc.main' 2>/dev/null \
-                    | grep '^\s*id\s*=' | head -1 | awk -F'"' '{print $2}')
-                  [ -n "$VPC_ID" ] && echo "[network] VPC_ID from state: ${VPC_ID}"
-                fi
-                echo "[network] VPC_ID: ${VPC_ID:-<not found>}"
+              # VPC lookup: tag first, then state fallback
+              VPC_ID=$(AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
+                aws ec2 describe-vpcs \
+                  --filters "Name=tag:Name,Values=brainmart-dev-vpc" \
+                  --query "Vpcs[0].VpcId" --output text --region us-east-1 2>/dev/null) || VPC_ID=""
+              [ "$VPC_ID" = "None" ] && VPC_ID=""
 
-                if [ -n "$VPC_ID" ]; then
-                  FL_ID=$(AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
-                    aws ec2 describe-flow-logs \
-                      --filter "Name=resource-id,Values=${VPC_ID}" \
-                               "Name=log-destination-type,Values=cloud-watch-logs" \
-                      --query "FlowLogs[0].FlowLogId" --output text \
-                      --region us-east-1 2>&1)
-                  [ "$FL_ID" = "None" ] && FL_ID=""
-                  echo "[network] FL_ID: ${FL_ID:-<none>}"
-
-                  if [ -n "$FL_ID" ]; then
-                    echo "[network] Importing $FL_ID ..."
-                    TF_LOG=ERROR terraform -chdir="$NET_CACHE" import \
-                      -input=false -lock=false \
-                      "aws_flow_log.main[0]" "$FL_ID"
-                    echo "[network] Import exit: $?"
-                  else
-                    echo "[network] No orphaned flow log in AWS. Terraform will create it."
-                  fi
-
-                  # ---- Import orphaned Security Groups --------------------------------
-                  # Pattern: SG exists in AWS (from interrupted apply) but not in state.
-                  # Terraform would fail with InvalidGroup.Duplicate without this import.
-                  _try_import_sg() {
-                    local TF_ADDR=$1 SG_NAME=$2 SG_ID
-                    # Skip if already in state
-                    if TF_LOG="" terraform -chdir="$NET_CACHE" state list 2>/dev/null | grep -qF "$TF_ADDR"; then
-                      echo "[network] $TF_ADDR already in state, skipping."
-                      return 0
-                    fi
-                    SG_ID=$(AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
-                      aws ec2 describe-security-groups \
-                        --filters "Name=vpc-id,Values=${VPC_ID}" "Name=group-name,Values=${SG_NAME}" \
-                        --query "SecurityGroups[0].GroupId" --output text \
-                        --region us-east-1 2>/dev/null) || SG_ID=""
-                    [ "$SG_ID" = "None" ] && SG_ID=""
-                    if [ -n "$SG_ID" ]; then
-                      echo "[network] Importing $TF_ADDR ($SG_ID) ..."
-                      TF_LOG=ERROR terraform -chdir="$NET_CACHE" import \
-                        -input=false -lock=false "$TF_ADDR" "$SG_ID"
-                      echo "[network] SG import exit: $?"
-                    else
-                      echo "[network] $SG_NAME not found in AWS, Terraform will create it."
-                    fi
-                  }
-
-                  _try_import_sg "aws_security_group.alb"           "brainmart-dev-alb-sg"
-                  _try_import_sg "aws_security_group.ecs"           "brainmart-dev-ecs-sg"
-                  _try_import_sg "aws_security_group.rds"           "brainmart-dev-rds-sg"
-                  _try_import_sg "aws_security_group.vpc_endpoints" "brainmart-dev-vpc-endpoints-sg"
-                fi
-              else
-                echo "[network] assume-role failed. Apply will handle the flow log."
+              if [ -z "$VPC_ID" ]; then
+                VPC_ID=$(TF_LOG="" terraform -chdir="$NET_CACHE" \
+                  state show 'aws_vpc.main' 2>/dev/null \
+                  | grep '^\s*id\s*=' | head -1 | awk -F'"' '{print $2}')
+                [ -n "$VPC_ID" ] && echo "[network] VPC_ID from state: ${VPC_ID}"
               fi
+              echo "[network] VPC_ID: ${VPC_ID:-<not found>}"
+            else
+              echo "[network] assume-role failed, imports skipped."
+            fi
+          fi
+
+          # ---- Import orphaned aws_flow_log (only if not already in state) ------
+          if [ -z "$FL_IN_STATE" ] && [ -n "$_AKI" ] && [ -n "$VPC_ID" ]; then
+            FL_ID=$(AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
+              aws ec2 describe-flow-logs \
+                --filter "Name=resource-id,Values=${VPC_ID}" \
+                         "Name=log-destination-type,Values=cloud-watch-logs" \
+                --query "FlowLogs[0].FlowLogId" --output text \
+                --region us-east-1 2>/dev/null) || FL_ID=""
+            [ "$FL_ID" = "None" ] && FL_ID=""
+            echo "[network] FL_ID: ${FL_ID:-<none>}"
+            if [ -n "$FL_ID" ]; then
+              echo "[network] Importing flow log $FL_ID ..."
+              TF_LOG=ERROR terraform -chdir="$NET_CACHE" import \
+                -input=false -lock=false \
+                "aws_flow_log.main[0]" "$FL_ID"
+              echo "[network] Flow log import exit: $?"
+            else
+              echo "[network] No orphaned flow log. Terraform will create it."
             fi
           else
-            echo "[network] Flow log already in state."
+            echo "[network] Flow log already in state or role unavailable, skipping flow-log import."
+          fi
+
+          # ---- Import orphaned Security Groups (runs every time) -----------------
+          # SG exists in AWS (from interrupted apply) but not in state.
+          # Terraform fails with InvalidGroup.Duplicate without this import.
+          # Runs UNCONDITIONALLY - not gated on flow log state.
+          if [ -n "$_AKI" ] && [ -n "$VPC_ID" ]; then
+            _try_import_sg() {
+              local TF_ADDR=$1 SG_NAME=$2 SG_ID
+              if TF_LOG="" terraform -chdir="$NET_CACHE" state list 2>/dev/null | grep -qF "$TF_ADDR"; then
+                echo "[network] $TF_ADDR already in state, skipping."
+                return 0
+              fi
+              SG_ID=$(AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
+                aws ec2 describe-security-groups \
+                  --filters "Name=vpc-id,Values=${VPC_ID}" "Name=group-name,Values=${SG_NAME}" \
+                  --query "SecurityGroups[0].GroupId" --output text \
+                  --region us-east-1 2>/dev/null) || SG_ID=""
+              [ "$SG_ID" = "None" ] && SG_ID=""
+              if [ -n "$SG_ID" ]; then
+                echo "[network] Importing $TF_ADDR ($SG_ID) ..."
+                TF_LOG=ERROR terraform -chdir="$NET_CACHE" import \
+                  -input=false -lock=false "$TF_ADDR" "$SG_ID"
+                echo "[network] SG import exit: $?"
+              else
+                echo "[network] $SG_NAME not in AWS, Terraform will create it."
+              fi
+            }
+
+            _try_import_sg "aws_security_group.alb"           "brainmart-dev-alb-sg"
+            _try_import_sg "aws_security_group.ecs"           "brainmart-dev-ecs-sg"
+            _try_import_sg "aws_security_group.rds"           "brainmart-dev-rds-sg"
+            _try_import_sg "aws_security_group.vpc_endpoints" "brainmart-dev-vpc-endpoints-sg"
+          else
+            echo "[network] Role or VPC unavailable, SG imports skipped."
           fi
 
           set -e
