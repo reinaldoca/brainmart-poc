@@ -91,7 +91,7 @@ jobs:
           pip install -r ${{ github.workspace }}/requirements.txt
           checkov --version
 
-      - name: ️  Ejecutar Checkov con custom policies
+      - name:   Ejecutar Checkov con custom policies
         id: checkov
         run: |
           cd infrastructure
@@ -159,7 +159,7 @@ jobs:
           reporter: java-junit
           fail-on-error: true
 
-      # ── OPA / Conftest ──────────────────────────────────────────────────────────
+      # -- OPA / Conftest ----------------------------------------------------------
       - name:  Instalar Conftest (OPA runner)
         run: |
           # Instalar conftest para ejecutar politicas Rego contra el plan de Terraform
@@ -170,7 +170,7 @@ jobs:
           sudo mv conftest /usr/local/bin/
           conftest --version
 
-      - name: ⚙️  Setup Terraform para generar plan
+      - name:   Setup Terraform para generar plan
         run: |
           curl -fsSL \
             "https://releases.hashicorp.com/terraform/${{ env.TERRAFORM_VERSION }}/terraform_${{ env.TERRAFORM_VERSION }}_linux_amd64.zip" \
@@ -178,7 +178,7 @@ jobs:
           unzip -q terraform.zip && sudo mv terraform /usr/local/bin/
           terraform --version
 
-      - name: ️  Ejecutar OPA policies contra modulos Terraform
+      - name:   Ejecutar OPA policies contra modulos Terraform
         run: |
           cd infrastructure
 
@@ -243,18 +243,18 @@ jobs:
             echo '> Note: multi_az=false in dev is expected. Enforced only in prod.'
           } >> $GITHUB_STEP_SUMMARY
 
-      - name: ❌ Fallar si Checkov encontro violaciones CRITICAS
+      - name:  Fallar si Checkov encontro violaciones CRITICAS
         if: steps.checkov.outputs.checkov_exit_code != '0'
         run: |
-          echo "❌ Checkov encontro violaciones de compliance. El pipeline no puede continuar."
+          echo " Checkov encontro violaciones de compliance. El pipeline no puede continuar."
           echo 'Checkov compliance violations found. Full output visible above in step log.'
           echo 'See the Job Summary tab for a formatted report with all violations.'
           grep 'FAILED for resource:' /tmp/checkov-output.txt || true
           exit 1
 
-  # ──────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
   # JOB 2: SAST + SCA (Analisis de codigo y dependencias)
-  # ──────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
   sast-sca:
     name:  SAST (SonarQube) + SCA (Snyk)
     runs-on: ubuntu-latest
@@ -384,22 +384,22 @@ jobs:
           path: microservices/patient-service/TestResults/
           retention-days: 90
 
-  # ──────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
   # JOB 3: TERRAGRUNT PLAN
-  # ──────────────────────────────────────────────────────────────────────────────
-  # ──────────────────────────────────────────────────────────────────────────────
-  # ────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
+  # ------------------------------------------------------------------------------
+  # ----------------------------------------------------------------------------
   # JOB: BOOTSTRAP INFRA
   # Crea KMS key, S3 bucket y DynamoDB table para el backend de Terraform.
   # Usa backend LOCAL para evitar la dependencia circular.
   # Es idempotente: si los recursos ya existen, terraform apply no hace nada.
-  # ────────────────────────────────────────────────────────────────────────────
-  # ────────────────────────────────────────────────────────────────────────────
+  # ----------------------------------------------------------------------------
+  # ----------------------------------------------------------------------------
   # JOB: BOOTSTRAP INFRA
   # Crea KMS key, S3 bucket y DynamoDB table para el backend de Terraform.
-  # Usa AWS CLI puro — idempotente sin necesidad de terraform state ni imports.
+  # Usa AWS CLI puro - idempotente sin necesidad de terraform state ni imports.
   # El modulo infrastructure/bootstrap/ existe como referencia documentada.
-  # ────────────────────────────────────────────────────────────────────────────
+  # ----------------------------------------------------------------------------
   bootstrap-infra:
     name: Bootstrap Terraform Backend (KMS + S3 + DynamoDB)
     runs-on: ubuntu-latest
@@ -422,7 +422,7 @@ jobs:
           TABLE="brainmart-tfstate-lock"
           KMS_ALIAS="alias/brainmart-tfstate-key-${REGION}"
 
-          # ── KMS KEY ─────────────────────────────────────────────────────────
+          # -- KMS KEY ---------------------------------------------------------
           if aws kms describe-key --key-id "$KMS_ALIAS" --region "$REGION" >/dev/null 2>&1; then
             echo "KMS alias $KMS_ALIAS already exists"
           else
@@ -440,7 +440,7 @@ jobs:
           KMS_ARN=$(aws kms describe-key --key-id "$KMS_ALIAS" --region "$REGION" \
             --query "KeyMetadata.Arn" --output text)
 
-          # ── S3 BUCKET ────────────────────────────────────────────────────────
+          # -- S3 BUCKET --------------------------------------------------------
           if aws s3api head-bucket --bucket "$BUCKET" --region "$REGION" 2>/dev/null; then
             echo "S3 bucket $BUCKET already exists"
           else
@@ -458,7 +458,7 @@ jobs:
             echo "S3 bucket created and configured"
           fi
 
-          # ── DYNAMODB TABLE ───────────────────────────────────────────────────
+          # -- DYNAMODB TABLE ---------------------------------------------------
           if aws dynamodb describe-table --table-name "$TABLE" --region "$REGION" >/dev/null 2>&1; then
             echo "DynamoDB table $TABLE already exists"
           else
@@ -512,7 +512,7 @@ jobs:
           unzip -q terraform.zip && sudo mv terraform /usr/local/bin/
           terraform --version
 
-      - name: ⚙️  Setup Terragrunt + conftest
+      - name:   Setup Terragrunt + conftest
         run: |
           curl -Lo terragrunt \
             "https://github.com/gruntwork-io/terragrunt/releases/download/v${{ env.TERRAGRUNT_VERSION }}/terragrunt_linux_amd64"
@@ -584,14 +584,14 @@ jobs:
             infrastructure/environments/${{ matrix.environment }}/**/tfplan.json
           retention-days: 30
 
-  # ──────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
   # JOB 4: BUILD + SCAN + COSIGN
-  # ──────────────────────────────────────────────────────────────────────────────
-  # ────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
+  # ----------------------------------------------------------------------------
   # JOB: BOOTSTRAP ECR
   # Crea el repositorio ECR si no existe. ECR es un recurso compartido de
-  # larga duracion (Shared Services) — no pertenece a ningun ambiente.
-  # ────────────────────────────────────────────────────────────────────────────
+  # larga duracion (Shared Services) - no pertenece a ningun ambiente.
+  # ----------------------------------------------------------------------------
   bootstrap-ecr:
     name: Bootstrap ECR Repository
     runs-on: ubuntu-latest
@@ -794,10 +794,10 @@ jobs:
             --type "https://brainmart.health/compliance/v1" \
             "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
 
-  # ──────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
   # JOB 5: SBOM GENERATION
-  # ──────────────────────────────────────────────────────────────────────────────
-  # ──────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
+  # ------------------------------------------------------------------------------
   sbom-generate:
     name:  SBOM Generation (SPDX)
     runs-on: ubuntu-latest
@@ -858,10 +858,10 @@ jobs:
             "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
           echo "SBOM adjuntado a la imagen como attestation Cosign"
 
-  # ──────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
   # JOB 6: DEPLOY DEV
   # Deploy automatico al ambiente de desarrollo
-  # ──────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
   deploy-dev:
     name:  Deploy DEV
     runs-on: ubuntu-latest
@@ -897,7 +897,7 @@ jobs:
       - name:  Terragrunt Apply - DEV
         # continue-on-error removed: apply failure = infra in unknown state, must block
         run: |
-          # ── Helper: apply with file-redirect to avoid SIGPIPE ─────────────────
+          # -- Helper: apply with file-redirect to avoid SIGPIPE -----------------
           apply_module() {
             local MODULE=$1
             local MODULE_NAME="${MODULE##*/}"
@@ -975,12 +975,12 @@ jobs:
               || echo "[fix_network_state] WARN: state patch upload failed. Terraform apply will re-generate outputs."
           }
 
-          # ───────────────────────────────────────────────────────────────────────
-          # DEV network deploy — order matters:
-          # 1. terragrunt init  → creates .terragrunt-cache so terraform import can run
+          # -----------------------------------------------------------------------
+          # DEV network deploy - order matters:
+          # 1. terragrunt init  -> creates .terragrunt-cache so terraform import can run
           # 2. import orphaned resources (exist in AWS, missing from state after broken-pipe)
           # 3. fix missing outputs in state
-          # 4. apply  → with state already up to date, plan = 0 or very few resources
+          # 4. apply  -> with state already up to date, plan = 0 or very few resources
           # -- DEV network: init, import orphaned flow log, apply
           # Root cause confirmed from CI log 00:45:48:
           #   enable_flow_logs=false -> Terraform plans DESTROY of IAM role
@@ -1085,13 +1085,13 @@ jobs:
           # ---- Handle orphaned Security Groups ----------------------------------
           # Strategy:
           #   1. terraform import -var-file (provides required vars so Terraform
-          #      can evaluate the module config — this was the root cause of all
+          #      can evaluate the module config - this was the root cause of all
           #      previous silent failures: missing TF_VAR_* = exit 1 under set +e)
           #   2. Fallback: if import fails, DELETE the orphaned SG so Terraform
           #      can create it fresh (safe: no live resources use these SGs yet)
           #
           # NOTE: imports.tf was REMOVED. It used for_each on import{} blocks
-          # targeting single resources — Terraform rejects this, making
+          # targeting single resources - Terraform rejects this, making
           # `terraform state list` fail (exit 1), which silently skipped ALL
           # orphan handling and let the apply fail with InvalidGroup.Duplicate.
 
@@ -1157,7 +1157,7 @@ jobs:
                 return 0
               fi
 
-              # Fallback: import failed — delete SG so Terraform creates it fresh
+              # Fallback: import failed - delete SG so Terraform creates it fresh
               echo "[network] WARN: import failed (exit $_IMP_EXIT). Deleting $SG_NAME ($SG_ID) for fresh create..."
               AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
                 aws ec2 delete-security-group --group-id "$SG_ID" --region us-east-1 2>&1 \
@@ -1165,7 +1165,7 @@ jobs:
                 || echo "[network] WARN: delete also failed for $SG_NAME."
             }
 
-            # Process order: innermost dependency first (rds→ecs→alb→vpc_endpoints)
+            # Process order: innermost dependency first (rds->ecs->alb->vpc_endpoints)
             _import_orphaned_sg "brainmart-dev-rds-sg"           "aws_security_group.rds"
             _import_orphaned_sg "brainmart-dev-ecs-sg"           "aws_security_group.ecs"
             _import_orphaned_sg "brainmart-dev-alb-sg"           "aws_security_group.alb"
@@ -1219,7 +1219,7 @@ jobs:
             --services brainmart-dev-patient-service \
             --region us-east-1
 
-          echo "✅ Deploy a DEV completado"
+          echo " Deploy a DEV completado"
 
       - name:  Smoke tests DEV
         run: |
@@ -1228,14 +1228,14 @@ jobs:
 
           # Health check basico
           curl -f https://api-dev.brainmart.health/health || \
-            (echo "❌ Health check fallo en DEV" && exit 1)
+            (echo " Health check fallo en DEV" && exit 1)
 
-          echo "✅ Smoke tests DEV pasaron"
+          echo " Smoke tests DEV pasaron"
 
-  # ──────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
   # JOB 7: DEPLOY STAGING
   # Deploy automatico a staging
-  # ──────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
   deploy-staging:
     name:  Deploy STAGING
     runs-on: ubuntu-latest
@@ -1349,10 +1349,10 @@ jobs:
             --services brainmart-staging-patient-service \
             --region us-east-1
 
-  # ──────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
   # JOB 8: DAST
-  # ──────────────────────────────────────────────────────────────────────────────
-  # ──────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
+  # ------------------------------------------------------------------------------
   dast:
     name:    DAST (OWASP ZAP)
     runs-on: ubuntu-latest
@@ -1387,14 +1387,14 @@ jobs:
       - name:  Agregar ZAP summary al pipeline
         if: always()
         run: |
-          echo "## ️  DAST Results (OWASP ZAP)" >> $GITHUB_STEP_SUMMARY
+          echo "##   DAST Results (OWASP ZAP)" >> $GITHUB_STEP_SUMMARY
           echo "Target: https://api-staging.brainmart.health" >> $GITHUB_STEP_SUMMARY
           echo "Reporte completo en artefacto: dast-zap-report" >> $GITHUB_STEP_SUMMARY
 
-  # ──────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
   # JOB 9: DEPLOY PRODUCCION
   # Requiere aprobacion manual (GitHub Environments)
-  # ──────────────────────────────────────────────────────────────────────────────
+  # ------------------------------------------------------------------------------
   deploy-prod:
     name:  Deploy PRODUCCION
     runs-on: ubuntu-latest
@@ -1426,7 +1426,7 @@ jobs:
           role-session-name: Deploy-PROD-${{ github.sha }}
           aws-region: us-east-1
 
-      - name: ✅ Verificar firma Cosign de la imagen antes de deploy
+      - name:  Verificar firma Cosign de la imagen antes de deploy
         env:
           DIGEST: ${{ needs.build-scan.outputs.image-digest }}
           COSIGN_EXPERIMENTAL: "1"
@@ -1436,7 +1436,7 @@ jobs:
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
 
-          echo "✅ Firma Cosign verificada. La imagen proviene del pipeline de CI/CD."
+          echo " Firma Cosign verificada. La imagen proviene del pipeline de CI/CD."
 
       - name:  Terragrunt Apply - PRODUCCION (us-east-1)
         # continue-on-error removed: apply failure = infra in unknown state, must block
@@ -1585,13 +1585,13 @@ jobs:
 
           # Health check basico
           curl -f https://api.brainmart.health/health || \
-            (echo "❌ Health check PROD fallo - iniciando rollback" && exit 1)
+            (echo " Health check PROD fallo - iniciando rollback" && exit 1)
 
           # Verificar que el audit trail este funcionando
           curl -f https://api.brainmart.health/health/audit || \
-            (echo "❌ Audit trail health check fallo" && exit 1)
+            (echo " Audit trail health check fallo" && exit 1)
 
-          echo "✅ Deploy a PRODUCCION completado exitosamente"
+          echo " Deploy a PRODUCCION completado exitosamente"
           echo "##  Deploy PROD exitoso" >> $GITHUB_STEP_SUMMARY
           echo "Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "Fecha: $(date -u)" >> $GITHUB_STEP_SUMMARY
@@ -1602,7 +1602,7 @@ jobs:
         with:
           channel-id: "${{ vars.SLACK_DEPLOY_CHANNEL }}"
           slack-message: |
-            ${{ job.status == 'success' && '✅' || '❌' }} *Deploy PRODUCCION ${{ job.status }}*
+            ${{ job.status == 'success' && '' || '' }} *Deploy PRODUCCION ${{ job.status }}*
             Commit: `${{ github.sha }}`
             By: @${{ github.actor }}
             Pipeline: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
