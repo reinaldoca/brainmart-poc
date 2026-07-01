@@ -267,13 +267,13 @@ resource "aws_default_security_group" "default" {
 # Solo acepta HTTPS entrante desde internet; rechaza HTTP
 resource "aws_security_group" "alb" {
   name        = "${var.name_prefix}-alb-sg"
-  description = "Security Group para ALB de Brainmart. Solo HTTPS desde internet."
+  description = "Security Group for ALB - HTTPS only from internet"
   vpc_id      = aws_vpc.main.id
 
   # ENTRADA: solo HTTPS (443) desde cualquier IP
   # HTTP (80) no esta? permitido: redirigir a HTTPS debe ser manejado por el ALB listener
   ingress {
-    description = "HTTPS desde internet"
+    description = "HTTPS from internet"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
@@ -283,7 +283,7 @@ resource "aws_security_group" "alb" {
   # SALIDA: hacia los microservicios en subnets privadas
   # Solo al puerto de la aplicacio?n .NET (8080)
   egress {
-    description = "Hacia microservicios ECS en subnets privadas"
+    description = "To ECS microservices in private subnets"
     from_port   = 8080
     to_port     = 8080
     protocol    = "tcp"
@@ -302,12 +302,12 @@ resource "aws_security_group" "alb" {
 # Security Group para ECS Fargate (microservicios .NET 8)
 resource "aws_security_group" "ecs" {
   name        = "${var.name_prefix}-ecs-sg"
-  description = "Security Group para tareas ECS Fargate de Brainmart"
+  description = "Security Group for ECS Fargate tasks - Brainmart"
   vpc_id      = aws_vpc.main.id
 
   # ENTRADA: solo desde el ALB en el puerto de la aplicacio?n
   ingress {
-    description     = "Desde ALB hacia la aplicacio?n .NET"
+        description = "From ALB to .NET application on port 8080"
     from_port       = 8080
     to_port         = 8080
     protocol        = "tcp"
@@ -316,7 +316,7 @@ resource "aws_security_group" "ecs" {
 
   # SALIDA: hacia RDS (PostgreSQL), Secrets Manager (via VPC Endpoint), S3 y ECR
   egress {
-    description = "Hacia RDS PostgreSQL en subnets aisladas"
+    description = "To RDS PostgreSQL in isolated subnets"
     from_port   = 5432
     to_port     = 5432
     protocol    = "tcp"
@@ -324,7 +324,7 @@ resource "aws_security_group" "ecs" {
   }
 
   egress {
-    description = "HTTPS hacia VPC Endpoints y NAT (ECR, Secrets Manager, etc.)"
+    description = "HTTPS to VPC Endpoints and NAT (ECR, Secrets Manager, etc.)"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
@@ -343,13 +343,13 @@ resource "aws_security_group" "ecs" {
 # Security Group para RDS PostgreSQL
 resource "aws_security_group" "rds" {
   name        = "${var.name_prefix}-rds-sg"
-  description = "Security Group para RDS PostgreSQL de Brainmart. Solo desde ECS."
+  description = "Security Group for RDS PostgreSQL - ECS access only"
   vpc_id      = aws_vpc.main.id
 
   # ENTRADA: solo desde los microservicios ECS en el puerto PostgreSQL
   # CRI?TICO: 0.0.0.0/0 en el puerto 5432 esta? prohibido por SCP de Capa 0
   ingress {
-    description     = "PostgreSQL desde microservicios ECS"
+        description = "PostgreSQL from ECS microservices"
     from_port       = 5432
     to_port         = 5432
     protocol        = "tcp"
@@ -358,7 +358,7 @@ resource "aws_security_group" "rds" {
 
   # SALIDA: ninguna (la BD solo responde a conexiones entrantes)
   egress {
-    description = "Sin salida desde RDS"
+    description = "No outbound from RDS"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -377,12 +377,12 @@ resource "aws_security_group" "rds" {
 # Security Group para VPC Endpoints
 resource "aws_security_group" "vpc_endpoints" {
   name        = "${var.name_prefix}-vpc-endpoints-sg"
-  description = "Security Group para VPC Endpoints de Brainmart"
+  description = "Security Group for VPC Endpoints - Brainmart"
   vpc_id      = aws_vpc.main.id
 
   # Los VPC Endpoints responden en HTTPS desde recursos dentro de la VPC
   ingress {
-    description = "HTTPS desde recursos dentro de la VPC"
+    description = "HTTPS from resources inside the VPC"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
