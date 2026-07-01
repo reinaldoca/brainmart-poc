@@ -191,34 +191,30 @@ jobs:
 
           # Crear un plan JSON de ejemplo para validar las politicas Rego
           # En el pipeline real, este JSON viene del terragrunt plan
-          cat > /tmp/mock-tfplan.json << 'EOF'
-          {
-            "format_version": "1.2",
-            "resource_changes": [
-              {
-                "address": "aws_db_instance.main",
-                "type": "aws_db_instance",
-                "change": {
-                  "actions": ["create"],
-                  "after": {
-                    "identifier": "brainmart-dev-rds-postgres",
-                    "instance_class": "db.t3.medium",
-                    "multi_az": false,
-                    "storage_encrypted": true,
-                    "backup_retention_period": 7,
-                    "deletion_protection": false,
-                    "tags": {
-                      "Environment": "dev",
-                      "Project": "brainmart",
-                      "Owner": "devsecops-team@brainmart.health",
-                      "ComplianceLevel": "FDA-21CFR11-GCP-ALCOA-GDPR"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          EOF
+          printf '%s' '{
+  "format_version": "1.2",
+  "resource_changes": [{
+    "address": "aws_db_instance.main",
+    "type": "aws_db_instance",
+    "change": {
+      "actions": ["create"],
+      "after": {
+        "identifier": "brainmart-dev-rds-postgres",
+        "instance_class": "db.t3.medium",
+        "multi_az": false,
+        "storage_encrypted": true,
+        "backup_retention_period": 7,
+        "deletion_protection": false,
+        "tags": {
+          "Environment": "dev",
+          "Project": "brainmart",
+          "Owner": "devsecops-team@brainmart.health",
+          "ComplianceLevel": "FDA-21CFR11-GCP-ALCOA-GDPR"
+        }
+      }
+    }
+  }]
+}' > /tmp/mock-tfplan.json
 
           # Run conftest - tee output so violations appear in log AND Step Summary
           conftest test /tmp/mock-tfplan.json \
@@ -384,21 +380,10 @@ jobs:
           path: microservices/patient-service/TestResults/
           retention-days: 90
 
-  # ------------------------------------------------------------------------------
-  # JOB 3: TERRAGRUNT PLAN
-  # ------------------------------------------------------------------------------
-  # ------------------------------------------------------------------------------
-  # ----------------------------------------------------------------------------
-  # JOB: BOOTSTRAP INFRA
-  # Crea KMS key, S3 bucket y DynamoDB table para el backend de Terraform.
-  # Usa backend LOCAL para evitar la dependencia circular.
-  # Es idempotente: si los recursos ya existen, terraform apply no hace nada.
-  # ----------------------------------------------------------------------------
   # ----------------------------------------------------------------------------
   # JOB: BOOTSTRAP INFRA
   # Crea KMS key, S3 bucket y DynamoDB table para el backend de Terraform.
   # Usa AWS CLI puro - idempotente sin necesidad de terraform state ni imports.
-  # El modulo infrastructure/bootstrap/ existe como referencia documentada.
   # ----------------------------------------------------------------------------
   bootstrap-infra:
     name: Bootstrap Terraform Backend (KMS + S3 + DynamoDB)
@@ -584,13 +569,9 @@ jobs:
             infrastructure/environments/${{ matrix.environment }}/**/tfplan.json
           retention-days: 30
 
-  # ------------------------------------------------------------------------------
-  # JOB 4: BUILD + SCAN + COSIGN
-  # ------------------------------------------------------------------------------
   # ----------------------------------------------------------------------------
   # JOB: BOOTSTRAP ECR
-  # Crea el repositorio ECR si no existe. ECR es un recurso compartido de
-  # larga duracion (Shared Services) - no pertenece a ningun ambiente.
+  # Crea el repositorio ECR si no existe. ECR es un recurso compartido.
   # ----------------------------------------------------------------------------
   bootstrap-ecr:
     name: Bootstrap ECR Repository
@@ -631,9 +612,7 @@ jobs:
       - name: Aplicar lifecycle policy al repositorio
         run: |
           # Escribir el JSON a un archivo temporal para evitar problemas de escaping en YAML
-          cat > /tmp/ecr-lifecycle.json << 'HEREDOC'
-          {"rules":[{"rulePriority":1,"description":"Keep last 10 sha builds","selection":{"tagStatus":"tagged","tagPrefixList":["sha-"],"countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}},{"rulePriority":2,"description":"Expire untagged after 14 days","selection":{"tagStatus":"untagged","countType":"sinceImagePushed","countUnit":"days","countNumber":14},"action":{"type":"expire"}}]}
-          HEREDOC
+          printf '%s' '{"rules":[{"rulePriority":1,"description":"Keep last 10 sha builds","selection":{"tagStatus":"tagged","tagPrefixList":["sha-"],"countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}},{"rulePriority":2,"description":"Expire untagged after 14 days","selection":{"tagStatus":"untagged","countType":"sinceImagePushed","countUnit":"days","countNumber":14},"action":{"type":"expire"}}]}' > /tmp/ecr-lifecycle.json
           aws ecr put-lifecycle-policy \
             --repository-name "${{ env.IMAGE_NAME }}" \
             --lifecycle-policy-text file:///tmp/ecr-lifecycle.json \
@@ -794,10 +773,9 @@ jobs:
             --type "https://brainmart.health/compliance/v1" \
             "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
 
-  # ------------------------------------------------------------------------------
-  # JOB 5: SBOM GENERATION
-  # ------------------------------------------------------------------------------
-  # ------------------------------------------------------------------------------
+  # ----------------------------------------------------------------------------
+  # JOB: SBOM GENERATION
+  # ----------------------------------------------------------------------------
   sbom-generate:
     name:  SBOM Generation (SPDX)
     runs-on: ubuntu-latest
@@ -1349,10 +1327,9 @@ jobs:
             --services brainmart-staging-patient-service \
             --region us-east-1
 
-  # ------------------------------------------------------------------------------
-  # JOB 8: DAST
-  # ------------------------------------------------------------------------------
-  # ------------------------------------------------------------------------------
+  # ----------------------------------------------------------------------------
+  # JOB: DAST (OWASP ZAP)
+  # ----------------------------------------------------------------------------
   dast:
     name:    DAST (OWASP ZAP)
     runs-on: ubuntu-latest
