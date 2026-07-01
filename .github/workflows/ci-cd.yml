@@ -1083,30 +1083,51 @@ jobs:
           fi
 
           # ---- Handle orphaned Security Groups ----------------------------------
-          # imports.tf in the network module uses Terraform-native import{} blocks
-          # (data "aws_security_groups" + for_each) to auto-import SGs that exist
-          # in AWS but not in state. This handles the broken-pipe recovery case.
+          # Strategy:
+          #   1. terraform import -var-file (provides required vars so Terraform
+          #      can evaluate the module config — this was the root cause of all
+          #      previous silent failures: missing TF_VAR_* = exit 1 under set +e)
+          #   2. Fallback: if import fails, DELETE the orphaned SG so Terraform
+          #      can create it fresh (safe: no live resources use these SGs yet)
           #
-          # CI fallback: if the VPC is not yet in state (truly fresh deploy with
-          # orphaned SGs from a previous partial run), the import{} blocks can't
-          # run (aws_vpc.main.id unknown). In that case we DELETE the orphaned SGs
-          # so Terraform can recreate them cleanly. Safe because no running
-          # resources depend on them (network module never fully applied).
+          # NOTE: imports.tf was REMOVED. It used for_each on import{} blocks
+          # targeting single resources — Terraform rejects this, making
+          # `terraform state list` fail (exit 1), which silently skipped ALL
+          # orphan handling and let the apply fail with InvalidGroup.Duplicate.
+
+          # Write var-file with all required (no-default) variables for the
+          # network module. terraform import needs these to evaluate the config.
+          cat > /tmp/dev-network-import-vars.json << 'TFVARS'
+          {
+            "environment": "dev",
+            "name_prefix": "brainmart-dev",
+            "vpc_cidr": "10.10.0.0/16",
+            "availability_zones": ["us-east-1a", "us-east-1b"],
+            "public_subnet_cidrs": ["10.10.0.0/24", "10.10.1.0/24"],
+            "private_subnet_cidrs": ["10.10.10.0/24", "10.10.11.0/24"],
+            "isolated_subnet_cidrs": ["10.10.20.0/24", "10.10.21.0/24"],
+            "vpc_endpoints": {
+              "secrets_manager": true, "ecr_api": true, "ecr_dkr": true,
+              "logs": true, "s3": true, "dynamodb": true
+            }
+          }
+TFVARS
+          echo "[network] import var-file written."
+          echo "[network] _AKI set: $([ -n "$_AKI" ] && echo YES || echo NO)"
+          echo "[network] VPC_ID: ${VPC_ID:-<empty>}"
+
           if [ -n "$_AKI" ] && [ -n "$VPC_ID" ]; then
-            _handle_orphaned_sg() {
-              local SG_NAME=$1 TF_ADDR=$2 SG_ID STATE_LIST
+            _import_orphaned_sg() {
+              local SG_NAME=$1 TF_ADDR=$2 SG_ID _IMP_EXIT
 
-              # Read state list once; if it fails (S3 unreachable) skip entirely
-              STATE_LIST=$(TF_LOG="" terraform -chdir="$NET_CACHE" state list 2>/dev/null)
-              if [ $? -ne 0 ]; then
-                echo "[network] WARN: state list unavailable, skipping orphan check for $SG_NAME"
+              echo "[network] --- checking $SG_NAME ---"
+
+              # terraform state list: do NOT suppress stderr so failures are visible
+              if TF_LOG="" terraform -chdir="$NET_CACHE" state list 2>&1 | grep -qF "$TF_ADDR"; then
+                echo "[network] $TF_ADDR already in state, skipping."
                 return 0
               fi
-
-              if echo "$STATE_LIST" | grep -qF "$TF_ADDR"; then
-                echo "[network] $TF_ADDR already in state, nothing to do."
-                return 0
-              fi
+              echo "[network] $TF_ADDR NOT in state."
 
               SG_ID=$(AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
                 aws ec2 describe-security-groups \
@@ -1114,32 +1135,42 @@ jobs:
                   --query "SecurityGroups[0].GroupId" --output text \
                   --region us-east-1 2>/dev/null) || SG_ID=""
               [ "$SG_ID" = "None" ] && SG_ID=""
+              echo "[network] AWS SG_ID for $SG_NAME: ${SG_ID:-<not found>}"
 
               if [ -z "$SG_ID" ]; then
-                echo "[network] $SG_NAME not found in AWS, Terraform will create it."
+                echo "[network] $SG_NAME absent from AWS, Terraform will create it."
                 return 0
               fi
 
-              # SG exists in AWS but NOT in state.
-              # The network module's imports.tf handles this via Terraform-native
-              # import{} blocks when aws_vpc.main.id is known (partial state).
-              # As a CI-level safety net, also delete it so a fresh Terraform
-              # create works even if the import{} block can't evaluate yet.
-              echo "[network] Orphaned $SG_NAME ($SG_ID) found - removing so Terraform can manage it..."
-              # Delete in dependency order: rules referencing other SGs are removed
-              # automatically by AWS when the referenced SG is deleted.
+              # Try: terraform import with explicit var-file so the module config
+              # can be evaluated (without TF_VAR_* terraform exits silently under set+e)
+              echo "[network] Importing $TF_ADDR ($SG_ID) with var-file..."
+              terraform -chdir="$NET_CACHE" import \
+                -var-file=/tmp/dev-network-import-vars.json \
+                -input=false -lock=false \
+                "$TF_ADDR" "$SG_ID" 2>&1
+              _IMP_EXIT=$?
+              echo "[network] import exit: $_IMP_EXIT"
+
+              # Verify import landed in state
+              if TF_LOG="" terraform -chdir="$NET_CACHE" state list 2>/dev/null | grep -qF "$TF_ADDR"; then
+                echo "[network] $TF_ADDR confirmed in state."
+                return 0
+              fi
+
+              # Fallback: import failed — delete SG so Terraform creates it fresh
+              echo "[network] WARN: import failed (exit $_IMP_EXIT). Deleting $SG_NAME ($SG_ID) for fresh create..."
               AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
-                aws ec2 delete-security-group --group-id "$SG_ID" --region us-east-1 2>/dev/null \
-                && echo "[network] $SG_NAME ($SG_ID) deleted." \
-                || echo "[network] WARN: delete $SG_NAME failed (dependency?). imports.tf will import it."
+                aws ec2 delete-security-group --group-id "$SG_ID" --region us-east-1 2>&1 \
+                && echo "[network] $SG_NAME deleted, Terraform will recreate." \
+                || echo "[network] WARN: delete also failed for $SG_NAME."
             }
 
-            # Delete order: innermost (rds) first so outbound rules are gone
-            # before deleting the SGs that are referenced by those rules.
-            _handle_orphaned_sg "brainmart-dev-rds-sg"           "aws_security_group.rds"
-            _handle_orphaned_sg "brainmart-dev-ecs-sg"           "aws_security_group.ecs"
-            _handle_orphaned_sg "brainmart-dev-alb-sg"           "aws_security_group.alb"
-            _handle_orphaned_sg "brainmart-dev-vpc-endpoints-sg" "aws_security_group.vpc_endpoints"
+            # Process order: innermost dependency first (rds→ecs→alb→vpc_endpoints)
+            _import_orphaned_sg "brainmart-dev-rds-sg"           "aws_security_group.rds"
+            _import_orphaned_sg "brainmart-dev-ecs-sg"           "aws_security_group.ecs"
+            _import_orphaned_sg "brainmart-dev-alb-sg"           "aws_security_group.alb"
+            _import_orphaned_sg "brainmart-dev-vpc-endpoints-sg" "aws_security_group.vpc_endpoints"
           else
             echo "[network] Role or VPC unavailable, orphan SG check skipped."
           fi
