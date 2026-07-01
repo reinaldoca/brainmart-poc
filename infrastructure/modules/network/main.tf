@@ -295,7 +295,11 @@ resource "aws_security_group" "alb" {
   })
 
   lifecycle {
-    create_before_destroy = true
+    # description is immutable in AWS (cannot be changed in-place).
+    # Ignoring it prevents destroy+recreate when description text changes,
+    # which would cause DependencyViolation (VPC endpoints / ENIs attached)
+    # and InvalidGroup.Duplicate (create_before_destroy + same name).
+    ignore_changes = [description]
   }
 }
 
@@ -336,7 +340,7 @@ resource "aws_security_group" "ecs" {
   })
 
   lifecycle {
-    create_before_destroy = true
+    ignore_changes = [description]
   }
 }
 
@@ -370,7 +374,7 @@ resource "aws_security_group" "rds" {
   })
 
   lifecycle {
-    create_before_destroy = true
+    ignore_changes = [description]
   }
 }
 
@@ -392,6 +396,13 @@ resource "aws_security_group" "vpc_endpoints" {
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-vpc-endpoints-sg"
   })
+
+  lifecycle {
+    # description is immutable; ignore_changes prevents destroy+recreate.
+    # vpc_endpoints SG cannot be deleted while Interface Endpoints reference it
+    # (DependencyViolation) - so we must never trigger replacement.
+    ignore_changes = [description]
+  }
 }
 
 # ??????????????????????????????????????????????????????????????????????????????

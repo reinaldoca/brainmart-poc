@@ -1098,11 +1098,58 @@ jobs:
                 || echo "[network] WARN: delete also failed for $SG_NAME."
             }
 
+            # vpc_endpoints import variant: no delete fallback (VPC endpoints always
+            # reference this SG - DependencyViolation makes delete impossible).
+            # lifecycle.ignore_changes=[description] in main.tf ensures Terraform
+            # never plans a replacement after import, so import-only is sufficient.
+            _import_orphaned_sg_no_delete() {
+              local SG_NAME=$1 TF_ADDR=$2 SG_ID _IMP_EXIT
+
+              echo "[network] --- checking $SG_NAME (import-only) ---"
+
+              if TF_LOG="" terraform -chdir="$NET_CACHE" state list 2>&1 | grep -qF "$TF_ADDR"; then
+                echo "[network] $TF_ADDR already in state, skipping."
+                return 0
+              fi
+              echo "[network] $TF_ADDR NOT in state."
+
+              SG_ID=$(aws ec2 describe-security-groups \
+                  --filters "Name=vpc-id,Values=${VPC_ID}" "Name=group-name,Values=${SG_NAME}" \
+                  --query "SecurityGroups[0].GroupId" --output text \
+                  --region us-east-1 2>/dev/null) || SG_ID=""
+              [ "$SG_ID" = "None" ] && SG_ID=""
+              echo "[network] AWS SG_ID for $SG_NAME: ${SG_ID:-<not found>}"
+
+              if [ -z "$SG_ID" ]; then
+                echo "[network] $SG_NAME absent from AWS, Terraform will create it."
+                return 0
+              fi
+
+              echo "[network] Importing $TF_ADDR ($SG_ID) ..."
+              terraform -chdir="$NET_CACHE" import \
+                -var-file=/tmp/dev-network-import-vars.json \
+                -input=false -lock=false \
+                "$TF_ADDR" "$SG_ID" 2>&1
+              _IMP_EXIT=$?
+              echo "[network] import exit: $_IMP_EXIT"
+
+              if TF_LOG="" terraform -chdir="$NET_CACHE" state list 2>/dev/null | grep -qF "$TF_ADDR"; then
+                echo "[network] $TF_ADDR confirmed in state."
+              else
+                echo "[network] WARN: import failed for $TF_ADDR (exit $_IMP_EXIT)."
+                echo "[network] WARN: vpc_endpoints SG has VPC Interface Endpoints attached."
+                echo "[network] WARN: lifecycle.ignore_changes=[description] prevents replacement."
+                echo "[network] WARN: If apply fails, manually: terraform import aws_security_group.vpc_endpoints $SG_ID"
+              fi
+            }
+
             # Process order: innermost dependency first (rds->ecs->alb->vpc_endpoints)
             _import_orphaned_sg "brainmart-dev-rds-sg"           "aws_security_group.rds"
             _import_orphaned_sg "brainmart-dev-ecs-sg"           "aws_security_group.ecs"
             _import_orphaned_sg "brainmart-dev-alb-sg"           "aws_security_group.alb"
-            _import_orphaned_sg "brainmart-dev-vpc-endpoints-sg" "aws_security_group.vpc_endpoints"
+            # vpc_endpoints SG: NEVER attempt delete fallback - VPC Interface Endpoints
+            # always reference it (DependencyViolation). Import-only for this SG.
+            _import_orphaned_sg_no_delete "brainmart-dev-vpc-endpoints-sg" "aws_security_group.vpc_endpoints"
           else
             echo "[network] Role or VPC unavailable, orphan SG check skipped."
           fi
