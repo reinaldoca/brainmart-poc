@@ -1082,47 +1082,66 @@ jobs:
             echo "[network] Flow log already in state or role unavailable, skipping flow-log import."
           fi
 
-          # ---- Import orphaned Security Groups (runs every time) -----------------
-          # SG exists in AWS (from interrupted apply) but not in state.
-          # Terraform fails with InvalidGroup.Duplicate without this import.
-          # Runs UNCONDITIONALLY - not gated on flow log state.
+          # ---- Handle orphaned Security Groups ----------------------------------
+          # imports.tf in the network module uses Terraform-native import{} blocks
+          # (data "aws_security_groups" + for_each) to auto-import SGs that exist
+          # in AWS but not in state. This handles the broken-pipe recovery case.
+          #
+          # CI fallback: if the VPC is not yet in state (truly fresh deploy with
+          # orphaned SGs from a previous partial run), the import{} blocks can't
+          # run (aws_vpc.main.id unknown). In that case we DELETE the orphaned SGs
+          # so Terraform can recreate them cleanly. Safe because no running
+          # resources depend on them (network module never fully applied).
           if [ -n "$_AKI" ] && [ -n "$VPC_ID" ]; then
-            _try_import_sg() {
-              local TF_ADDR=$1 SG_NAME=$2 SG_ID
-              # Check state (terraform can read S3 with CI role credentials)
-              if TF_LOG="" terraform -chdir="$NET_CACHE" state list 2>/dev/null | grep -qF "$TF_ADDR"; then
-                echo "[network] $TF_ADDR already in state, skipping."
+            _handle_orphaned_sg() {
+              local SG_NAME=$1 TF_ADDR=$2 SG_ID STATE_LIST
+
+              # Read state list once; if it fails (S3 unreachable) skip entirely
+              STATE_LIST=$(TF_LOG="" terraform -chdir="$NET_CACHE" state list 2>/dev/null)
+              if [ $? -ne 0 ]; then
+                echo "[network] WARN: state list unavailable, skipping orphan check for $SG_NAME"
                 return 0
               fi
-              # Describe SG in AWS using the assumed role (CI role lacks ec2:Describe)
+
+              if echo "$STATE_LIST" | grep -qF "$TF_ADDR"; then
+                echo "[network] $TF_ADDR already in state, nothing to do."
+                return 0
+              fi
+
               SG_ID=$(AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
                 aws ec2 describe-security-groups \
                   --filters "Name=vpc-id,Values=${VPC_ID}" "Name=group-name,Values=${SG_NAME}" \
                   --query "SecurityGroups[0].GroupId" --output text \
                   --region us-east-1 2>/dev/null) || SG_ID=""
               [ "$SG_ID" = "None" ] && SG_ID=""
-              if [ -n "$SG_ID" ]; then
-                echo "[network] Importing $TF_ADDR ($SG_ID) ..."
-                # MUST use 'terragrunt run -- import', NOT 'terraform import'.
-                # Reason: 'terraform import' runs without TF_VAR_* variables
-                # (name_prefix, vpc_cidr, etc.) which are injected by Terragrunt
-                # from the inputs{} block. Without them Terraform exits
-                # "No value for required variable" - silently under set +e -
-                # and the SG is never imported, causing InvalidGroup.Duplicate.
-                (cd "$NET_DIR" && TF_LOG=ERROR TG_NON_INTERACTIVE=true \
-                  terragrunt run -- import -input=false -lock=false "$TF_ADDR" "$SG_ID")
-                echo "[network] SG import exit: $?"
-              else
-                echo "[network] $SG_NAME not in AWS, Terraform will create it."
+
+              if [ -z "$SG_ID" ]; then
+                echo "[network] $SG_NAME not found in AWS, Terraform will create it."
+                return 0
               fi
+
+              # SG exists in AWS but NOT in state.
+              # The network module's imports.tf handles this via Terraform-native
+              # import{} blocks when aws_vpc.main.id is known (partial state).
+              # As a CI-level safety net, also delete it so a fresh Terraform
+              # create works even if the import{} block can't evaluate yet.
+              echo "[network] Orphaned $SG_NAME ($SG_ID) found - removing so Terraform can manage it..."
+              # Delete in dependency order: rules referencing other SGs are removed
+              # automatically by AWS when the referenced SG is deleted.
+              AWS_ACCESS_KEY_ID="$_AKI" AWS_SECRET_ACCESS_KEY="$_SAK" AWS_SESSION_TOKEN="$_STK" \
+                aws ec2 delete-security-group --group-id "$SG_ID" --region us-east-1 2>/dev/null \
+                && echo "[network] $SG_NAME ($SG_ID) deleted." \
+                || echo "[network] WARN: delete $SG_NAME failed (dependency?). imports.tf will import it."
             }
 
-            _try_import_sg "aws_security_group.alb"           "brainmart-dev-alb-sg"
-            _try_import_sg "aws_security_group.ecs"           "brainmart-dev-ecs-sg"
-            _try_import_sg "aws_security_group.rds"           "brainmart-dev-rds-sg"
-            _try_import_sg "aws_security_group.vpc_endpoints" "brainmart-dev-vpc-endpoints-sg"
+            # Delete order: innermost (rds) first so outbound rules are gone
+            # before deleting the SGs that are referenced by those rules.
+            _handle_orphaned_sg "brainmart-dev-rds-sg"           "aws_security_group.rds"
+            _handle_orphaned_sg "brainmart-dev-ecs-sg"           "aws_security_group.ecs"
+            _handle_orphaned_sg "brainmart-dev-alb-sg"           "aws_security_group.alb"
+            _handle_orphaned_sg "brainmart-dev-vpc-endpoints-sg" "aws_security_group.vpc_endpoints"
           else
-            echo "[network] Role or VPC unavailable, SG imports skipped."
+            echo "[network] Role or VPC unavailable, orphan SG check skipped."
           fi
 
           set -e
