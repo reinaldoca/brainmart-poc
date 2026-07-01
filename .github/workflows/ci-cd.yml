@@ -1097,21 +1097,20 @@ jobs:
 
           # Write var-file with all required (no-default) variables for the
           # network module. terraform import needs these to evaluate the config.
-          cat > /tmp/dev-network-import-vars.json << 'TFVARS'
-          {
-            "environment": "dev",
-            "name_prefix": "brainmart-dev",
-            "vpc_cidr": "10.10.0.0/16",
-            "availability_zones": ["us-east-1a", "us-east-1b"],
-            "public_subnet_cidrs": ["10.10.0.0/24", "10.10.1.0/24"],
-            "private_subnet_cidrs": ["10.10.10.0/24", "10.10.11.0/24"],
-            "isolated_subnet_cidrs": ["10.10.20.0/24", "10.10.21.0/24"],
-            "vpc_endpoints": {
-              "secrets_manager": true, "ecr_api": true, "ecr_dkr": true,
-              "logs": true, "s3": true, "dynamodb": true
-            }
-          }
-TFVARS
+          # Using printf instead of heredoc to avoid YAML indentation conflicts.
+          printf '%s' '{
+  "environment": "dev",
+  "name_prefix": "brainmart-dev",
+  "vpc_cidr": "10.10.0.0/16",
+  "availability_zones": ["us-east-1a","us-east-1b"],
+  "public_subnet_cidrs": ["10.10.0.0/24","10.10.1.0/24"],
+  "private_subnet_cidrs": ["10.10.10.0/24","10.10.11.0/24"],
+  "isolated_subnet_cidrs": ["10.10.20.0/24","10.10.21.0/24"],
+  "vpc_endpoints": {
+    "secrets_manager":true,"ecr_api":true,"ecr_dkr":true,
+    "logs":true,"s3":true,"dynamodb":true
+  }
+}' > /tmp/dev-network-import-vars.json
           echo "[network] import var-file written."
           echo "[network] _AKI set: $([ -n "$_AKI" ] && echo YES || echo NO)"
           echo "[network] VPC_ID: ${VPC_ID:-<empty>}"
