@@ -69,12 +69,14 @@ resource "aws_kms_key" "rds" {
   enable_key_rotation = true
 
   # Poli?tica de la key: solo los roles autorizados pueden usarla
-  policy = jsonencode({
+    policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        # La cuenta puede administrar la key via IAM
-        Sid    = "EnableIAMUserPermissions"
+        # Root account retains full administrative access to the key.
+        # AWS REQUIRES this statement: without it, CreateKey returns
+        # MalformedPolicyDocumentException (key would be permanently unmanageable).
+        Sid    = "EnableRootAdministration"
         Effect = "Allow"
         Principal = {
           AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
@@ -83,7 +85,24 @@ resource "aws_kms_key" "rds" {
         Resource = "*"
       },
       {
-        # RDS puede usar la key para cifrar/descifrar
+        # BrainmartTerragruntRole (used by Terraform/CI) can manage and use the key.
+        Sid    = "AllowTerragruntRole"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/BrainmartTerragruntRole"
+        }
+        Action = [
+          "kms:Create*", "kms:Describe*", "kms:Enable*", "kms:List*",
+          "kms:Put*", "kms:Update*", "kms:Revoke*", "kms:Disable*",
+          "kms:Get*", "kms:Delete*", "kms:TagResource", "kms:UntagResource",
+          "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion",
+          "kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*",
+          "kms:GenerateDataKey*", "kms:DescribeKey"
+        ]
+        Resource = "*"
+      },
+      {
+        # RDS service principal can use the key for encryption operations.
         Sid    = "AllowRDSUseOfKey"
         Effect = "Allow"
         Principal = {
@@ -186,12 +205,14 @@ resource "aws_db_parameter_group" "postgres15" {
   family      = "postgres15"
   description = "Parameter group para PostgreSQL 15 de Brainmart con configuracio?n ALCOA+"
 
-  # ?? Replicacio?n lo?gica para DR cross-region ??
-  # Necesario para enviar cambios a la re?plica en eu-west-1
+    # Logical replication in RDS PostgreSQL is controlled by rds.logical_replication,
+  # NOT by wal_level. AWS manages wal_level internally: setting rds.logical_replication=1
+  # automatically raises wal_level to 'logical'. Attempting to set wal_level directly
+  # returns: InvalidParameterValue: Could not find parameter with name: wal_level
   parameter {
-    name         = "wal_level"
-    value        = "logical"
-    apply_method = "pending-reboot"  # Requiere reinicio del motor
+    name         = "rds.logical_replication"
+    value        = "1"
+    apply_method = "pending-reboot"
   }
 
   parameter {
